@@ -858,6 +858,35 @@ function Drops.findUpdate()
     return false
 end
 
+
+function Drops.applyTaken(d, left)
+    local list = Drops.list
+    if not list or not table.find(list, d) then return end
+    if not Drops.update then Drops.findUpdate() end
+    if Drops.update then
+        local ok = pcall(Drops.update, d, left)
+        if ok then
+            if left > 0 then
+                d.flown = nil
+                if typeof(d.frame) == "Instance" then pcall(function() d.frame.Visible = not d.culled end) end
+            end
+            return
+        end
+    end
+    -- cadangan manual (fungsi game tidak ketemu)
+    d.n = left
+    if left > 0 then
+        pcall(function()
+            if d.setGem then d.setGem(left) elseif d.count then d.count:set(left > 1 and tostring(left) or "") end
+        end)
+        d.flown = nil
+        if typeof(d.frame) == "Instance" then pcall(function() d.frame.Visible = not d.culled end) end
+    else
+        local i = table.find(list, d)
+        if i then table.remove(list, i) end
+        if typeof(d.frame) == "Instance" then pcall(function() d.frame:Destroy() end) end
+    end
+end
 local function playerState()
     if not Refs.State then return nil end
     local ok, s = pcall(Refs.State)
@@ -1098,7 +1127,9 @@ local P = {
     HomeX = nil, HomeY = nil,          -- posisi berdiri saat PNB (tile)
     Left = true, Right = true, Up = false,
     PunchMs = 120,
-    Collect = true,
+    Collect = true,                    -- cadangan: jalan ke item yang tidak terjangkau remote
+    Fast = true,                       -- auto collect cepat (remote) di tile PNB & radius
+    Radius = 3,                        -- radius auto collect (tile) dari posisi break
     Status = "Siap", Put = 0, Broke = 0, Got = 0,
     Pending = nil,                     -- block yang sudah dipasang tapi belum pecah
     OnStop = nil,
@@ -1157,11 +1188,13 @@ local function goHome(run)
     return atHome()
 end
 
-local function dropOk(d, now)
+local FastFail = {}   -- drop yang ditolak server saat collect cepat
+
+local function dropOk(d, now, failTbl)
     if type(d) ~= "table" or type(d.x) ~= "number" or type(d.y) ~= "number" then return false end
     if d.taking or (d.n or 0) <= 0 then return false end
     if d.armed == false and d.id ~= 112 then return false end
-    local f = DropFailUntil[d.uid]
+    local f = (failTbl or DropFailUntil)[d.uid]
     if f and now < f then return false end
     if d.id ~= 112 and Refs.Inv then -- inventori penuh: tidak akan terpungut
         local ok, room = pcall(function() return Refs.Inv:room(d.id) end)
@@ -1193,8 +1226,7 @@ local function collectDrops(run)
     if not Drops.list then pcall(findDropRefs) end
     local list = Drops.list
     if not list then return end
-    local before = itemsNear(list)
-    if before <= 0 then return end
+    if itemsNear(list) <= 0 then return end
     local guard = 0
     while run() and guard < 10 do
         local s = playerState()
@@ -1222,7 +1254,118 @@ local function collectDrops(run)
             end
         end
     end
-    P.Got += math.max(0, before - itemsNear(list))
+end
+
+---------------------------------------------------------------------
+-- COLLECT CEPAT (remote): ambil langsung item di tile PNB + radius sekitar posisi break.
+-- Dipanggil SEBELUM block berikutnya dipasang, supaya item tidak tertimbun block.
+---------------------------------------------------------------------
+local function fastTake(d)
+    local w = Refs.World
+    local worldTake = w and rawget(w, "takeDrop")
+    if type(worldTake) ~= "function" and not TakeDropRemote then return false end
+    if d.taking or d.pending or d.display or (d.n or 0) <= 0 then return false end
+    if d.armed == false and d.id ~= 112 then return false end
+    local now = os.clock()
+    if FastFail[d.uid] and now < FastFail[d.uid] then return false end
+    local amount = d.n
+    if d.id ~= 112 and Refs.Inv then -- 112 = gems, tidak makan slot
+        local okr, room = pcall(function() return Refs.Inv:room(d.id) end)
+        if okr and type(room) == "number" then amount = math.min(amount, room) end
+    end
+    if amount <= 0 then FastFail[d.uid] = now + 1 return false end
+    d.taking = true
+    if typeof(d.frame) == "Instance" then pcall(function() d.frame.Visible = false end) end
+    local ok, taken
+    if type(worldTake) == "function" then
+        ok, taken = pcall(worldTake, d.uid, amount)
+    else
+        ok, taken = pcall(TakeDropRemote.InvokeServer, TakeDropRemote, d.uid, amount)
+    end
+    d.taking = false
+    if not (ok and type(taken) == "number" and taken > 0) then
+        d.failN = (d.failN or 0) + 1
+        FastFail[d.uid] = os.clock() + math.min(6, d.failN) -- ditolak (kejauhan): coba lagi sebentar lagi
+        d.flown = nil
+        if typeof(d.frame) == "Instance" then pcall(function() d.frame.Visible = not d.culled end) end
+        return false
+    end
+    FastFail[d.uid] = nil
+    if d.id == 112 then
+        if Refs.Gems then pcall(Refs.Gems.addGems, taken) end
+    elseif Refs.Inv then
+        pcall(function() Refs.Inv:add(d.id, taken) end)
+    end
+    Drops.applyTaken(d, math.max(0, (d.n or 0) - taken))
+    return true
+end
+
+-- drop yang termasuk area collect: radius dari posisi break, atau dekat tile yang barusan dipecah
+local function inCollectArea(d, tile)
+    local cx, cy = P.HomeX + 0.5, P.HomeY + 0.5
+    if abs(d.x - cx) <= P.Radius and abs(d.y - cy) <= P.Radius then return true end
+    if tile and abs(d.x - (tile.x + 0.5)) <= 1.5 and abs(d.y - (tile.y + 0.5)) <= 2.5 then return true end
+    return false
+end
+
+local function itemsAround(list, tile)
+    local total = 0
+    for _, d in ipairs(list) do
+        if type(d) == "table" and type(d.x) == "number" and type(d.y) == "number" and (d.n or 0) > 0
+            and inCollectArea(d, tile) then
+            total += d.n
+        end
+    end
+    return total
+end
+
+local function dropsInTile(tx, ty)
+    local list = Drops.list
+    if not list then return 0 end
+    local t, n = { x = tx, y = ty }, 0
+    for _, d in ipairs(list) do
+        if type(d) == "table" and type(d.x) == "number" and (d.n or 0) > 0 and inTile(t, d.x, d.y) then n += 1 end
+    end
+    return n
+end
+
+local function fastCollect(run, tile)
+    if not P.Fast or not P.HomeX then return end
+    local list = Drops.list
+    if not list then return end
+    for _ = 1, 4 do
+        if not run() then return end
+        local now, batch = os.clock(), {}
+        for _, d in ipairs(list) do
+            if dropOk(d, now, FastFail) and inCollectArea(d, tile) then batch[#batch + 1] = d end
+        end
+        if #batch == 0 then return end
+        say(("Collect cepat (%d)"):format(#batch))
+        for _, d in ipairs(batch) do
+            task.spawn(function() pcall(fastTake, d) end) -- semua sekaligus (paralel)
+        end
+        local t0 = os.clock()
+        while run() and os.clock() - t0 < 1.0 do
+            local busy = false
+            for _, d in ipairs(batch) do
+                if d.taking or (dropAlive(list, d) and not (FastFail[d.uid] and os.clock() < FastFail[d.uid])) then busy = true break end
+            end
+            if not busy then break end
+            task.wait()
+        end
+    end
+end
+
+-- Ambil semua item di area PNB: cepat (remote) dulu, sisanya dijemput karakter.
+local function collectAll(run, tile)
+    if not (P.Fast or P.Collect) then return end
+    if not Drops.list then pcall(findDropRefs) end
+    local list = Drops.list
+    if not list then return end
+    local before = itemsAround(list, tile)
+    fastCollect(run, tile)
+    if run() then collectDrops(run) end
+    P.Got += math.max(0, before - itemsAround(list, tile))
 end
 
 -- Pasang 1 block lalu pecahkan sampai hancur. true = sudah pecah.
@@ -1296,7 +1439,7 @@ local function pnbLoop(run)
             if pend.id == P.BlockId and tileAt(pend.layer, pend.x, pend.y) == pend.id then
                 if pnbTile(run, pend.x, pend.y, "sisa") then
                     Drops.waitSpawn({ { x = pend.x, y = pend.y } })
-                    collectDrops(run)
+                    collectAll(run, { x = pend.x, y = pend.y })
                     goHome(run)
                 else
                     task.wait(0.4)
@@ -1311,19 +1454,31 @@ local function pnbLoop(run)
             if not run() then break end
             if invCount(P.BlockId) <= 0 then break end
             local tx, ty = P.HomeX + tg.dx, P.HomeY + tg.dy
-            local ok = pnbTile(run, tx, ty, tg.name)
-            if ok then
-                did += 1
-                Drops.waitSpawn({ { x = tx, y = ty } }) -- tunggu item hasil break muncul
-                collectDrops(run)
-                if not goHome(run) then break end
-            elseif P.Pending then
-                break -- block belum pecah: jangan put di arah lain
+            -- JANGAN put block di atas item yang belum terambil (item jadi terhalang block)
+            local clear = true
+            if dropsInTile(tx, ty) > 0 then
+                say("Item belum terambil, collect dulu (" .. tg.name .. ")")
+                collectAll(run, { x = tx, y = ty })
+                if dropsInTile(tx, ty) > 0 then
+                    clear = false
+                    say("Item masih di tile " .. tg.name .. ", dilewati dulu")
+                end
+            end
+            if clear and run() then
+                local ok = pnbTile(run, tx, ty, tg.name)
+                if ok then
+                    did += 1
+                    Drops.waitSpawn({ { x = tx, y = ty } }) -- tunggu item hasil break muncul
+                    collectAll(run, { x = tx, y = ty })      -- ambil SEBELUM block berikutnya
+                    if not goHome(run) then break end
+                elseif P.Pending then
+                    break -- block belum pecah: jangan put di arah lain
+                end
             end
         end
 
         if run() and invCount(P.BlockId) <= 0 and not P.Pending then
-            collectDrops(run) -- item hasil break bisa berisi block lagi
+            collectAll(run, nil) -- item hasil break bisa berisi block lagi
             goHome(run)
             if invCount(P.BlockId) <= 0 then
                 say("Block habis, PNB berhenti")
@@ -1593,7 +1748,7 @@ local PageInfo = newPage("info")
 -- 1) Fitur on/off
 local cMain = card(PagePNB)
 local cbRun
-cbRun = checkbox(cMain, "Aktifkan PNB", "Put & break otomatis, item diambil pakai karakter", false, function(on)
+cbRun = checkbox(cMain, "Aktifkan PNB", "Put & break otomatis, item diambil sebelum block berikutnya", false, function(on)
     if on then
         local ok, err = P.start()
         if not ok then
@@ -1722,7 +1877,17 @@ checkbox(dirRow, "Atas", nil, P.Up, function(v) P.Up = v updatePreview() end, 0.
 
 -- 4) Pengaturan
 local cSet = card(PagePNB, "Pengaturan")
-checkbox(cSet, "Ambil item pakai karakter", "Karakter jalan ke item lalu kembali ke posisi break", P.Collect, function(v) P.Collect = v end)
+checkbox(cSet, "Auto collect cepat", "Ambil item di tile PNB & radius sebelum block berikutnya dipasang", P.Fast, function(v) P.Fast = v end)
+checkbox(cSet, "Ambil item pakai karakter", "Cadangan: karakter jalan ke item yang tidak terjangkau", P.Collect, function(v) P.Collect = v end)
+local radRow = mk("Frame", { Size = UDim2.new(1, 0, 0, 36), BackgroundTransparency = 1 }, cSet)
+label(radRow, { Size = UDim2.new(1, -110, 1, 0), Text = "Radius collect (tile)", Font = FM, TextSize = 14 })
+local radBox = field(radRow, "3", tostring(P.Radius), { Size = UDim2.fromOffset(100, 36), AnchorPoint = Vector2.new(1, 0),
+    Position = UDim2.new(1, 0, 0, 0), TextXAlignment = Enum.TextXAlignment.Center })
+radBox.FocusLost:Connect(function()
+    local n = tonumber(radBox.Text)
+    P.Radius = math.clamp(math.floor(n or P.Radius), 1, 5)
+    radBox.Text = tostring(P.Radius)
+end)
 checkbox(cSet, "Animasi tangan", "Tampilan memukul / memasang block", State.Visual, function(v) State.Visual = v end)
 local delayRow = mk("Frame", { Size = UDim2.new(1, 0, 0, 36), BackgroundTransparency = 1 }, cSet)
 label(delayRow, { Size = UDim2.new(1, -110, 1, 0), Text = "Jeda pukul (ms)", Font = FM, TextSize = 14 })
@@ -1755,7 +1920,7 @@ end)
 ---------------------------------------------------------------------
 local cAbout = card(PageInfo, "K NEAR", "PNB - Put & Break")
 label(cAbout, { Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y, TextWrapped = true, TextSize = 13, TextColor3 = C.sub,
-    Text = "Pilih block, tentukan posisi break, lalu aktifkan PNB. Item yang muncul diambil dengan jalan karakter, setelah itu lanjut PNB." })
+    Text = "Pilih block, tentukan posisi break, lalu aktifkan PNB. Item yang muncul diambil dulu (collect cepat / karakter), baru block berikutnya dipasang." })
 local cDc = card(PageInfo, "Komunitas")
 label(cDc, { Size = UDim2.new(1, 0, 0, 18), Text = DISCORD_URL, TextSize = 13, TextColor3 = C.accent, Font = FM })
 local copyDc = button(cDc, "Salin link Discord", { Size = UDim2.new(1, 0, 0, 38) }, true)
