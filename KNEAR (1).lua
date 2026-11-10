@@ -2440,6 +2440,10 @@ local function doInvRefresh(force)
         local labels = inventoryLabels(ids)
         UI.ddRefresh(UI.InvDropdown, labels)
         selectSaved(UI.InvDropdown, labels, State.SelectedId)
+        if UI.V2BlockDD then
+            UI.ddRefresh(UI.V2BlockDD, labels)
+            selectSaved(UI.V2BlockDD, labels, UI.V2 and UI.V2.BlockId)
+        end
     end
     local sids = seedIds()
     local ssig = table.concat(sids, ",")
@@ -2452,6 +2456,10 @@ local function doInvRefresh(force)
         if #labels == 0 then labels = { "(tidak ada seed di inventori)" } end
         UI.ddRefresh(UI.SeedDropdown, labels)
         selectSaved(UI.SeedDropdown, labels, Farmer.SeedId)
+        if UI.V2SeedDD then
+            UI.ddRefresh(UI.V2SeedDD, labels)
+            selectSaved(UI.V2SeedDD, labels, UI.V2 and UI.V2.SeedId)
+        end
         if UI.PabrikSeedDropdown then
             UI.ddRefresh(UI.PabrikSeedDropdown, labels)
             selectSaved(UI.PabrikSeedDropdown, labels, Pabrik.SeedId)
@@ -6712,6 +6720,319 @@ local function dropTrip(items, live, say)
 end
 Auto.dropTrip = dropTrip
 
+-- =====================================================================
+-- PABRIK V2 (K. NEAR)
+--   1. Auto collect drop dalam radius tile (otomatis / manual)
+--   2. Put & break block tepat di atas kepala (seed & gems terus mengalir)
+--   3. Tanam seed di atas blok padat yang kamu tentukan (Grid mode V2)
+--   4. Auto drop seed dengan jumlah custom
+-- Karakter berdiri diam; semua kerja di dalam jangkauan tangan.
+-- =====================================================================
+do (function()
+    local V2 = {
+        Running = false, RunId = 0, Status = "-",
+        Collect = true, CollectR = 3,
+        PB = true, BlockId = nil, PunchMs = 130,
+        Plant = true, Harvest = true, SeedId = nil, PlantMs = 150, Tiles = {},
+        Drop = true, DropAt = 150, DropN = 100, Keep = 0,
+        Placed = 0, Broken = 0, Planted = 0, Harvested = 0, Dropped = 0, Collected = 0,
+        DropBackoff = 0, Skip = {},
+    }
+    UI.V2 = V2
+    Config.add("PabrikV2", V2, {
+        "Collect", "CollectR", "PB", "BlockId", "PunchMs", "Plant", "Harvest", "SeedId",
+        "PlantMs", "Tiles", "Drop", "DropAt", "DropN", "Keep",
+    })
+
+    local function say(t) V2.Status = t end
+
+    local function blockId()
+        if V2.BlockId then return V2.BlockId end
+        return V2.SeedId and blockOfSeed(V2.SeedId) or nil
+    end
+
+    -- jarak collect yang benar-benar dipakai (server menolak yang lebih jauh dari RemoteReach)
+    function V2.effR()
+        return math.min(V2.CollectR, (State.RemoteReach or 2) + 0.2)
+    end
+
+    local function countTiles()
+        local n = 0
+        for _ in pairs(V2.Tiles) do n += 1 end
+        return n
+    end
+
+    -- ---------- 1. COLLECT ----------
+    local function collectSweep()
+        local list = Drops.list
+        if not list then return 0 end
+        local s = playerState()
+        if not s then return 0 end
+        local cx, cy = s.x, s.y - 0.475
+        local R = V2.effR()
+        local snap = table.move(list, 1, #list, 1, {})
+        local n = 0
+        for _, d in ipairs(snap) do
+            if type(d) == "table" and type(d.x) == "number" and type(d.y) == "number"
+                and math.abs(d.x - cx) <= R and math.abs(d.y - cy) <= R
+                and not d.taking and (d.n or 0) > 0 then
+                n += 1
+                local amount = d.n
+                task.spawn(function()
+                    local ok, got = pcall(takeDrop, d)
+                    if ok and got then V2.Collected += amount end
+                end)
+            end
+        end
+        return n
+    end
+
+    -- manual: sekali sapu
+    function V2.collectNow()
+        if not Drops.list then pcall(findDropRefs) end
+        if not Drops.list then
+            notify("Pabrik V2", "Daftar drop belum ketemu. Tekan 'Hubungkan ke game'", 4)
+            return 0
+        end
+        local n = collectSweep()
+        notify("Pabrik V2", (n > 0) and (n .. " drop diambil (radius " .. V2.effR() .. " tile)")
+            or ("Tidak ada drop dalam radius " .. V2.effR() .. " tile"), 3)
+        return n
+    end
+
+    -- otomatis: sapu terus selama toggle Auto collect nyala (tidak perlu Pabrik V2 jalan)
+    do
+        local nextC, nextRef = 0, 0
+        table.insert(Connections, RunService.Heartbeat:Connect(function()
+            if not alive() or not V2.Collect then return end
+            local now = os.clock()
+            if now < nextC then return end
+            nextC = now + 0.12
+            if not Drops.list then
+                if now >= nextRef then
+                    nextRef = now + 5
+                    pcall(findDropRefs)
+                end
+                return
+            end
+            pcall(collectSweep)
+        end))
+    end
+
+    -- ---------- 2. PUT & BREAK DI ATAS KEPALA ----------
+    local function putBreakOnce(run)
+        local id = blockId()
+        if not id then say("Pilih block untuk put & break (atau pilih seed)") return false end
+        local px, py = getPlayerTile()
+        if not px then say("Kamu belum masuk world") return false end
+        local x, y = px, py - 1 -- tile tepat di atas kepala
+        local fg = tileAt("fg", x, y)
+        if fg == nil then say("Tile di atas kepala di luar world") return false end
+        local it = ItemDB[id]
+        local layer = (it and it.background) and "bg" or "fg"
+        local cur = tileAt(layer, x, y)
+        if cur == nil then return false end
+        if not canWorkAt(x, y) then say("Tidak boleh build di atas kepala (lock / area)") return false end
+
+        if cur == 0 and (layer == "bg" or fg == 0) then
+            if invCount(id) <= 0 then say("Block " .. itemName(id) .. " habis") return false end
+            sendSetTile(layer, x, y, id)
+            if Refs.Inv then pcall(function() Refs.Inv:remove(id, 1) end) end
+            local key = x .. "," .. y
+            HitCount[key] = nil
+            PlacedAt[key] = os.clock()
+            State.Placed += 1
+            V2.Placed += 1
+        elseif cur ~= id then
+            say("Tile di atas kepala tidak kosong (" .. itemName(cur) .. ")")
+            return false
+        end
+
+        local tries = 0
+        while run() and tries < 80 do
+            local r = tryBreak(x, y, layer == "bg")
+            if r == "broke" then
+                V2.Broken += 1
+                say("Put & break " .. itemName(id) .. " (" .. x .. "," .. y .. ")")
+                return true
+            end
+            if r == nil then say("Block di atas kepala tidak bisa dipecah") return false end
+            tries += 1
+            task.wait(math.max(V2.PunchMs, 30) / 1000)
+        end
+        return false
+    end
+
+    -- ---------- 3. TANAM / PANEN DI ATAS BLOK PADAT ----------
+    local function plantSpots()
+        local ax, ay = getPlayerTile()
+        if not ax then return {} end
+        local out = {}
+        for key in pairs(V2.Tiles) do
+            local dx, dy = string.match(key, "^(-?%d+),(-?%d+)$")
+            if dx then
+                local bx, by = ax + tonumber(dx), ay + tonumber(dy)
+                local x, y = bx, by - 1 -- seed ditanam di atas blok padat
+                if not (x == ax and y == ay - 1) and not (x == ax and y == ay) then -- jangan ganggu tile put&break & badan
+                    out[#out + 1] = { x = x, y = y }
+                end
+            end
+        end
+        table.sort(out, function(a, b)
+            if a.x ~= b.x then return a.x < b.x end
+            return a.y < b.y
+        end)
+        return out
+    end
+
+    local function plantHarvestOnce(run)
+        local seed = V2.SeedId
+        if not seed then say("Pilih seed untuk ditanam") return 0 end
+        local spots = plantSpots()
+        if #spots == 0 then say("Belum ada blok padat ditentukan (Grid mode V2)") return 0 end
+        local R = farmReach() - 0.08
+        local did = 0
+        for _, t in ipairs(spots) do
+            if not run() then return did end
+            local s = playerState()
+            if not s then return did end
+            local key = t.x .. "," .. t.y
+            if stateReaches(s, t.x, t.y, R) and canWorkAt(t.x, t.y) and not (V2.Skip[key] and os.clock() < V2.Skip[key]) then
+                local id = fgIdAt(t.x, t.y)
+                if id ~= 0 then
+                    if V2.Harvest then
+                        local ra = treeReadyAt(t.x, t.y, id) -- nil = bukan pohon / data pohon belum ketemu
+                        if ra and workspace:GetServerTimeNow() >= ra then
+                            local r = tryBreak(t.x, t.y, false)
+                            if r == "broke" then
+                                V2.Harvested += 1
+                                did += 1
+                                say("Panen " .. itemName(id) .. " (" .. t.x .. "," .. t.y .. ")")
+                                task.wait(math.max(V2.PlantMs, 30) / 1000)
+                            else
+                                V2.Skip[key] = os.clock() + 20
+                            end
+                        end
+                    end
+                elseif V2.Plant and invCount(seed) > 0 and plantSpotOk(t.x, t.y, seed) then
+                    sendSetTile("fg", t.x, t.y, seed)
+                    if Refs.Inv then pcall(function() Refs.Inv:remove(seed, 1) end) end
+                    V2.Planted += 1
+                    did += 1
+                    say("Tanam " .. itemName(seed) .. " (" .. t.x .. "," .. t.y .. ")")
+                    task.wait(math.max(V2.PlantMs, 30) / 1000)
+                end
+            end
+        end
+        return did
+    end
+
+    -- ---------- 4. DROP SEED (jumlah custom) ----------
+    local function dropStep(run)
+        if not (V2.Drop and V2.SeedId) then return end
+        if os.clock() < V2.DropBackoff then return end
+        local have = invCount(V2.SeedId)
+        if have < V2.DropAt then return end
+        local n = math.min(V2.DropN, have - V2.Keep)
+        if n <= 0 then return end
+        say(("Drop %s x%d"):format(itemName(V2.SeedId), n))
+        local got, err = dropItems(V2.SeedId, n, run)
+        V2.Dropped += got or 0
+        if err then
+            say("Drop gagal: " .. tostring(err))
+            V2.DropBackoff = os.clock() + 15
+        end
+    end
+
+    -- ---------- LOOP UTAMA ----------
+    local function syncUi()
+        if UI.V2Toggle then pcall(function() UI.V2Toggle:Set(V2.Running) end) end
+        if UI.GridMode == "v2" and UI.setGridMode then pcall(UI.setGridMode, "v2") end
+    end
+
+    local function loop(id)
+        local function run() return V2.Running and V2.RunId == id and alive() end
+        say("Berjalan")
+        while run() do
+            local acted = 0
+            if V2.PB and putBreakOnce(run) then acted += 1 end
+            if not run() then break end
+            if V2.Plant or V2.Harvest then acted += plantHarvestOnce(run) end
+            if not run() then break end
+            dropStep(run)
+            task.wait(acted > 0 and 0.03 or 0.4)
+        end
+    end
+
+    function V2.start()
+        if V2.Running then return true end
+        if not Refs.World then
+            notify("Pabrik V2", "Data world belum ketemu. Tekan 'Hubungkan ke game'", 4)
+            return false
+        end
+        if not playerState() then
+            notify("Pabrik V2", "Kamu belum masuk world", 3)
+            return false
+        end
+        if not (V2.PB or V2.Plant or V2.Harvest or V2.Drop) then
+            notify("Pabrik V2", "Aktifkan minimal satu fungsi dulu", 3)
+            return false
+        end
+        if Pabrik.Running and Pabrik.stop then Pabrik.stop("Dihentikan karena Pabrik V2 dimulai") end
+        if State.Running then pcall(stopFarm) end
+        V2.RunId += 1
+        V2.Running = true
+        V2.Skip = {}
+        local id = V2.RunId
+        syncUi()
+        task.spawn(function()
+            local ok, e = pcall(loop, id)
+            if not ok then
+                warn("[K. NEAR] Pabrik V2 error: " .. tostring(e))
+                say("Error: " .. tostring(e))
+            end
+            if V2.RunId == id then
+                V2.Running = false
+                syncUi()
+            end
+        end)
+        return true
+    end
+
+    function V2.stop(reason)
+        V2.Running = false
+        V2.RunId += 1
+        say(reason or "Berhenti")
+        syncUi()
+    end
+
+    function V2.resetStats()
+        V2.Placed, V2.Broken, V2.Planted, V2.Harvested, V2.Dropped, V2.Collected = 0, 0, 0, 0, 0, 0
+    end
+
+    function V2.markBelowFeet()
+        local x, y = getPlayerTile()
+        if not x then return false end
+        V2.Tiles["0,1"] = true -- blok tepat di bawah kaki (relatif ke posisi berdiri)
+        return true
+    end
+
+    function V2.statusText()
+        local px, py = getPlayerTile()
+        local bid, sid = blockId(), V2.SeedId
+        local lines = {
+            "Status  : " .. (V2.Running and "BERJALAN" or "berhenti") .. " - " .. tostring(V2.Status),
+            "Posisi  : " .. (px and ("(" .. px .. "," .. py .. ")  kepala (" .. px .. "," .. (py - 1) .. ")") or "-"),
+            "Block   : " .. (bid and (itemName(bid) .. " x" .. invCount(bid)) or "belum dipilih"),
+            "Seed    : " .. (sid and (itemName(sid) .. " x" .. invCount(sid)) or "belum dipilih"),
+            "Blok padat ditentukan: " .. countTiles(),
+            ("Put %d | Break %d | Tanam %d | Panen %d"):format(V2.Placed, V2.Broken, V2.Planted, V2.Harvested),
+            ("Collect %d (%s, radius %.1f tile) | Drop %d"):format(V2.Collected, V2.Collect and "ON" or "off", V2.effR(), V2.Dropped),
+        }
+        return table.concat(lines, "\n")
+    end
+end)() end
+
 -- Titik drop sudah diatur? (posisi, WORLD:ID, atau world lain)
 function Pabrik.pointSet()
     if Pabrik.DropX >= 0 then return true end
@@ -9249,6 +9570,7 @@ UI.GridMode = "farm"
 UI.gridTarget = function()
     if UI.GridMode == "pabrik" then return Pabrik.Tiles end
     if UI.GridMode == "lahan" then return Build.Tiles end
+    if UI.GridMode == "v2" and UI.V2 then return UI.V2.Tiles end
     return State.Offsets
 end
 
@@ -9304,7 +9626,9 @@ GridStart.Parent = Panel
 Instance.new("UICorner", GridStart).CornerRadius = UDim.new(0, 8)
 UI.GridStart = GridStart
 GridStart.MouseButton1Click:Connect(function()
-    if UI.GridMode == "lahan" then
+    if UI.GridMode == "v2" and UI.V2 then
+        if UI.V2.Running then UI.V2.stop() else UI.V2.start() end
+    elseif UI.GridMode == "lahan" then
         if Build.Running then Build.stop() elseif Build.start then Build.start() end
     elseif UI.GridMode == "pabrik" then
         if Pabrik.Running then Pabrik.stop() else Pabrik.start() end
@@ -9348,12 +9672,17 @@ do (function()
     local function apply()
         local pab = UI.GridMode == "pabrik"
         local lah = UI.GridMode == "lahan"
-        ModeBtn.Text = lah and I18N.T("Lahan") or (pab and I18N.T("Pabrik") or "Farm")
-        ModeBtn.BackgroundColor3 = lah and _G.__KNP.mode2
-            or (pab and _G.__KNP.mode3 or _G.__KNP.row2)
-        Title.Text = I18N.T(lah and "Tile Break Lahan" or (pab and "Tile Break Pabrik" or "Grid Tile"))
+        local v2m = UI.GridMode == "v2"
+        ModeBtn.Text = v2m and "V2" or (lah and I18N.T("Lahan") or (pab and I18N.T("Pabrik") or "Farm"))
+        ModeBtn.BackgroundColor3 = v2m and _G.__KNP.accentLo or (lah and _G.__KNP.mode2
+            or (pab and _G.__KNP.mode3 or _G.__KNP.row2))
+        Title.Text = v2m and "Blok Padat Pabrik V2" or I18N.T(lah and "Tile Break Lahan" or (pab and "Tile Break Pabrik" or "Grid Tile"))
         for key in pairs(CellButtons) do paintCell(key) end
-        if lah then
+        if v2m then
+            local run = UI.V2 and UI.V2.Running
+            GridStart.Text = run and "STOP V2" or "START V2"
+            GridStart.BackgroundColor3 = run and _G.__KNP.danger or COLOR_ON
+        elseif lah then
             GridStart.Text = I18N.T(Build.Running and "STOP LAHAN" or "START LAHAN")
             GridStart.BackgroundColor3 = Build.Running and _G.__KNP.danger or COLOR_ON
         elseif pab then
@@ -9371,7 +9700,7 @@ do (function()
         apply()
     end
     ModeBtn.MouseButton1Click:Connect(function() -- Farm -> Pabrik -> Lahan -> Farm
-        local nxt = { farm = "pabrik", pabrik = "lahan", lahan = "farm" }
+        local nxt = { farm = "pabrik", pabrik = "lahan", lahan = "v2", v2 = "farm" }
         UI.setGridMode(nxt[UI.GridMode] or "farm")
     end)
     apply()
@@ -14785,6 +15114,219 @@ do
         end)
     end)()
 end
+-- ===== TAB: PABRIK V2 =====
+do (function()
+    local V2 = UI.V2
+    if not V2 then return end
+    local VTab = makeTab("Pabrik V2", "zap", "farm")
+
+    safe(function()
+        UI.V2Status = VTab:Paragraph({ Title = "Status Pabrik V2", Desc = "-" })
+    end)
+
+    local bCtl = box(VTab, "Kontrol", true)
+    local bPB = box(VTab, "Put & break di atas kepala", true)
+    local bPlant = box(VTab, "Tanam di atas blok padat", true)
+    local bCol = box(VTab, "Auto collect (radius tile)", true)
+    local bDrop = box(VTab, "Auto drop seed", true)
+
+    local function idFromLabel(opt) return tonumber(string.match(opt or "", "%[(%d+)%]$")) end
+    local function numInput(tab, o)
+        safe(function()
+            tab:Input({
+                Title = o.Title, Desc = o.Desc,
+                Value = tostring(o.Default), Placeholder = tostring(o.Default),
+                Callback = function(text)
+                    local v = tonumber(text)
+                    if v then o.Callback(math.floor(math.clamp(v, o.Min, o.Max))) end
+                end,
+            })
+        end)
+    end
+
+    -- ---- Kontrol ----
+    safe(function()
+        UI.V2Toggle = bCtl:Toggle({
+            Title = "Jalankan Pabrik V2",
+            Desc = "Karakter diam: put & break di atas kepala, tanam & panen di blok padat, drop seed",
+            Value = false,
+            Callback = function(on)
+                if on then
+                    if not V2.Running and V2.start() == false then
+                        pcall(function() UI.V2Toggle:Set(false) end)
+                    end
+                elseif V2.Running then
+                    V2.stop("Dihentikan")
+                end
+            end,
+        })
+    end)
+    safe(function()
+        bCtl:Button({
+            Title = "Reset statistik V2",
+            Callback = function() V2.resetStats() end,
+        })
+    end)
+
+    -- ---- Put & break ----
+    safe(function()
+        bPB:Toggle({
+            Title = "Put & break di atas kepala",
+            Desc = "Place block di tile tepat di atas kepala lalu pecahkan, berulang",
+            Value = V2.PB,
+            Callback = function(on) V2.PB = on end,
+        })
+    end)
+    safe(function()
+        UI.V2BlockDD = bPB:Dropdown({
+            Title = "Block yang di-put",
+            Desc = "Kosong = otomatis dari seed (Dirt Seed -> Dirt)",
+            Values = { "(memuat...)" },
+            Callback = function(opt)
+                local id = idFromLabel(opt)
+                if id then V2.BlockId = id end
+            end,
+        })
+    end)
+    addNumber(bPB, {
+        Title = "Jeda antar pukulan (ms)",
+        Desc = "Makin kecil makin cepat",
+        Min = 50, Max = 500, Step = 10, Default = V2.PunchMs,
+        Callback = function(v) V2.PunchMs = math.floor(v) end,
+    })
+
+    -- ---- Tanam di atas blok padat ----
+    safe(function()
+        bPlant:Toggle({
+            Title = "Tanam seed",
+            Desc = "Seed ditanam tepat di atas blok padat yang kamu tentukan",
+            Value = V2.Plant,
+            Callback = function(on) V2.Plant = on end,
+        })
+    end)
+    safe(function()
+        bPlant:Toggle({
+            Title = "Panen otomatis",
+            Desc = "Pecahkan pohon yang sudah siap panen di spot tanam",
+            Value = V2.Harvest,
+            Callback = function(on) V2.Harvest = on end,
+        })
+    end)
+    safe(function()
+        UI.V2SeedDD = bPlant:Dropdown({
+            Title = "Seed",
+            Desc = "Seed yang ditanam, juga seed yang di-drop",
+            Values = { "(memuat...)" },
+            Callback = function(opt)
+                local id = idFromLabel(opt)
+                if id then V2.SeedId = id end
+            end,
+        })
+    end)
+    safe(function()
+        bPlant:Button({
+            Title = "Tentukan blok padat (Grid)",
+            Desc = "Pilih kotak = blok padat; seed ditanam di atasnya. ME = posisi berdiri",
+            Callback = function()
+                if UI.setGridMode then UI.setGridMode("v2") end
+                if UI.GridGui then UI.GridGui.Enabled = true end
+            end,
+        })
+    end)
+    safe(function()
+        bPlant:Button({
+            Title = "Tandai blok tepat di bawah kaki",
+            Callback = function()
+                if V2.markBelowFeet() then
+                    notify("Pabrik V2", "Blok di bawah kaki ditandai", 3)
+                    if UI.GridMode == "v2" and UI.setGridMode then UI.setGridMode("v2") end
+                else
+                    notify("Pabrik V2", "Kamu belum masuk world", 3)
+                end
+            end,
+        })
+    end)
+    safe(function()
+        bPlant:Button({
+            Title = "Hapus semua blok yang ditentukan",
+            Callback = function()
+                for k in pairs(V2.Tiles) do V2.Tiles[k] = nil end
+                if UI.GridMode == "v2" and UI.setGridMode then UI.setGridMode("v2") end
+                notify("Pabrik V2", "Semua blok padat dihapus", 3)
+            end,
+        })
+    end)
+    addNumber(bPlant, {
+        Title = "Jeda tanam / panen (ms)",
+        Min = 60, Max = 600, Step = 10, Default = V2.PlantMs,
+        Callback = function(v) V2.PlantMs = math.floor(v) end,
+    })
+
+    -- ---- Collect ----
+    safe(function()
+        bCol:Toggle({
+            Title = "Auto collect",
+            Desc = "Ambil drop dalam radius terus-menerus (jalan walau Pabrik V2 mati)",
+            Value = V2.Collect,
+            Callback = function(on) V2.Collect = on end,
+        })
+    end)
+    addNumber(bCol, {
+        Title = "Radius collect (tile)",
+        Desc = "Server game biasanya hanya menerima drop sampai +-2 tile (RemoteReach)",
+        Min = 1, Max = 6, Step = 1, Default = V2.CollectR,
+        Callback = function(v) V2.CollectR = math.floor(v) end,
+    })
+    safe(function()
+        bCol:Button({
+            Title = "Collect sekarang (manual)",
+            Desc = "Sekali sapu semua drop dalam radius",
+            Callback = function() V2.collectNow() end,
+        })
+    end)
+
+    -- ---- Drop seed ----
+    safe(function()
+        bDrop:Toggle({
+            Title = "Auto drop seed",
+            Desc = "Drop di tempat berdiri saat seed mencapai batas",
+            Value = V2.Drop,
+            Callback = function(on) V2.Drop = on end,
+        })
+    end)
+    numInput(bDrop, {
+        Title = "Drop kalau seed sudah",
+        Desc = "Ketik angka (contoh 150)",
+        Min = 1, Max = 9999, Default = V2.DropAt,
+        Callback = function(v) V2.DropAt = v end,
+    })
+    numInput(bDrop, {
+        Title = "Jumlah seed yang di-drop",
+        Desc = "Custom, contoh 100. Lebih dari 200 dipecah otomatis",
+        Min = 1, Max = 9999, Default = V2.DropN,
+        Callback = function(v) V2.DropN = v end,
+    })
+    numInput(bDrop, {
+        Title = "Sisakan seed",
+        Desc = "Untuk ditanam lagi, tidak ikut di-drop",
+        Min = 0, Max = 9999, Default = V2.Keep,
+        Callback = function(v) V2.Keep = v end,
+    })
+
+    -- status hidup
+    task.spawn(function()
+        local last
+        while alive() do
+            task.wait(0.5)
+            local ok, txt = pcall(V2.statusText)
+            if ok and UI.V2Status and txt ~= last then
+                last = txt
+                pcall(function() UI.V2Status:SetDesc(txt) end)
+            end
+        end
+    end)
+end)() end
+
 local ConnTab = makeTab("Koneksi", "plug", "setel")
 
 safe(function()
