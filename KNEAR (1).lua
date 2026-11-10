@@ -6737,11 +6737,12 @@ do (function()
         Drop = true, DropAt = 150, DropN = 100, Keep = 0,
         Placed = 0, Broken = 0, Planted = 0, Harvested = 0, Dropped = 0, Collected = 0,
         DropBackoff = 0, Skip = {},
+        Auto = false, Home = nil, HomeFailUntil = 0, AutoPhase = "-",
     }
     UI.V2 = V2
     Config.add("PabrikV2", V2, {
         "Collect", "CollectR", "PB", "BlockId", "PunchMs", "Plant", "Harvest", "SeedId",
-        "PlantMs", "Tiles", "Drop", "DropAt", "DropN", "Keep",
+        "PlantMs", "Tiles", "Drop", "DropAt", "DropN", "Keep", "Auto",
     })
 
     local function say(t) V2.Status = t end
@@ -6820,19 +6821,18 @@ do (function()
     end
 
     -- ---------- 2. PUT & BREAK DI ATAS KEPALA ----------
-    local function putBreakOnce(run)
+    -- put & break di tile (x, y). Dipakai mode biasa (atas kepala) dan Auto Detect (kiri/kanan)
+    local function putBreakAt(run, x, y, label)
         local id = blockId()
         if not id then say("Pilih block untuk put & break (atau pilih seed)") return false end
-        local px, py = getPlayerTile()
-        if not px then say("Kamu belum masuk world") return false end
-        local x, y = px, py - 1 -- tile tepat di atas kepala
+        label = label or "di atas kepala"
         local fg = tileAt("fg", x, y)
-        if fg == nil then say("Tile di atas kepala di luar world") return false end
+        if fg == nil then say("Tile " .. label .. " di luar world") return false end
         local it = ItemDB[id]
         local layer = (it and it.background) and "bg" or "fg"
         local cur = tileAt(layer, x, y)
         if cur == nil then return false end
-        if not canWorkAt(x, y) then say("Tidak boleh build di atas kepala (lock / area)") return false end
+        if not canWorkAt(x, y) then say("Tidak boleh build " .. label .. " (lock / area)") return false end
 
         if cur == 0 and (layer == "bg" or fg == 0) then
             if invCount(id) <= 0 then say("Block " .. itemName(id) .. " habis") return false end
@@ -6844,7 +6844,7 @@ do (function()
             State.Placed += 1
             V2.Placed += 1
         elseif cur ~= id then
-            say("Tile di atas kepala tidak kosong (" .. itemName(cur) .. ")")
+            say("Tile " .. label .. " tidak kosong (" .. itemName(cur) .. ")")
             return false
         end
 
@@ -6856,16 +6856,23 @@ do (function()
                 say("Put & break " .. itemName(id) .. " (" .. x .. "," .. y .. ")")
                 return true
             end
-            if r == nil then say("Block di atas kepala tidak bisa dipecah") return false end
+            if r == nil then say("Block " .. label .. " tidak bisa dipecah") return false end
             tries += 1
             task.wait(math.max(V2.PunchMs, 30) / 1000)
         end
         return false
     end
 
+    local function putBreakOnce(run)
+        local px, py = getPlayerTile()
+        if not px then say("Kamu belum masuk world") return false end
+        return putBreakAt(run, px, py - 1, "di atas kepala") -- tile tepat di atas kepala
+    end
+
     -- ---------- 3. TANAM / PANEN DI ATAS BLOK PADAT ----------
-    local function plantSpots()
+    local function plantSpots(anchor)
         local ax, ay = getPlayerTile()
+        if anchor then ax, ay = anchor.x, anchor.y end
         if not ax then return {} end
         local out = {}
         for key in pairs(V2.Tiles) do
@@ -6873,7 +6880,9 @@ do (function()
             if dx then
                 local bx, by = ax + tonumber(dx), ay + tonumber(dy)
                 local x, y = bx, by - 1 -- seed ditanam di atas blok padat
-                if not (x == ax and y == ay - 1) and not (x == ax and y == ay) then -- jangan ganggu tile put&break & badan
+                local clash = (x == ax and y == ay - 1) or (x == ax and y == ay) -- tile put&break & badan
+                if anchor and y == ay and (x == ax - 1 or x == ax + 1) then clash = true end -- tile PNB kiri/kanan
+                if not clash then
                     out[#out + 1] = { x = x, y = y }
                 end
             end
@@ -6944,6 +6953,156 @@ do (function()
         end
     end
 
+    -- ---------- 5. AUTO DETECT (PNB kiri-kanan + panen/tanam per pohon) ----------
+    --   x∆x : karakter di tengah, block di-put & di-break di KIRI dan KANAN (bukan di atas kepala)
+    --   Ada drop (seed / block / gems) -> diambil dulu, baru lanjut PNB
+    --   Block habis -> deteksi pohon siap panen: panen 1 pohon, langsung tanam lagi di pohon itu, lanjut pohon berikut
+    --   Semua pohon beres -> balik ke posisi awal, lanjut PNB
+    local function dropsNear()
+        local list = Drops.list
+        if not list then return 0 end
+        local s = playerState()
+        if not s then return 0 end
+        local cx, cy = s.x, s.y - 0.475
+        local R = V2.effR()
+        local n = 0
+        for _, d in ipairs(list) do
+            if type(d) == "table" and type(d.x) == "number" and type(d.y) == "number"
+                and math.abs(d.x - cx) <= R and math.abs(d.y - cy) <= R and (d.n or 0) > 0 then
+                n += 1
+            end
+        end
+        return n
+    end
+
+    -- ambil semua drop di sekitar sampai habis (maks ~2 dtk), baru lanjut kerja
+    local function collectWait(run)
+        if not Drops.list then pcall(findDropRefs) end
+        if not Drops.list then return end
+        task.wait(0.15) -- beri waktu drop muncul
+        local t0 = os.clock()
+        while run() and os.clock() - t0 < 2 do
+            if dropsNear() <= 0 then break end
+            say("Ambil drop dulu...")
+            pcall(collectSweep)
+            task.wait(0.15)
+        end
+    end
+
+    local function goHome(run)
+        local h = V2.Home
+        if not h or not run() then return true end
+        local px, py = getPlayerTile()
+        if not px then return false end
+        if px == h.x and py == h.y then return true end
+        if os.clock() < (V2.HomeFailUntil or 0) then return false end
+        say(("Balik ke posisi awal (%d,%d)"):format(h.x, h.y))
+        if walkTo(h.x, h.y, 45) then return true end
+        V2.HomeFailUntil = os.clock() + 20
+        say("Gagal balik ke posisi awal, dicoba lagi nanti")
+        return false
+    end
+
+    function V2.setHome()
+        local x, y = getPlayerTile()
+        if not x then return false end
+        V2.Home = { x = x, y = y, world = Guard.worldName() }
+        return true
+    end
+
+    -- PNB sisi kiri & kanan; tiap block dipecah, drop diambil dulu
+    local function sidePNB(run)
+        local id = blockId()
+        if not id then say("Pilih block untuk put & break (atau pilih seed)") return 0 end
+        local did = 0
+        for _, dx in ipairs({ -1, 1 }) do
+            if not run() or invCount(id) <= 0 then break end
+            local px, py = getPlayerTile()
+            if not px then break end
+            if putBreakAt(run, px + dx, py, dx < 0 and "di kiri" or "di kanan") then
+                did += 1
+                collectWait(run)
+            end
+        end
+        return did
+    end
+
+    -- Panen & tanam per pohon. Hanya spot yang terjangkau dari posisi awal.
+    local function autoHarvestPlant(run)
+        local spots = plantSpots(V2.Home)
+        if #spots == 0 then say("Belum ada blok padat ditentukan (Grid mode V2)") return 0 end
+        local seed = V2.SeedId
+        local R = farmReach() - 0.08
+        local did = 0
+        for _, t in ipairs(spots) do
+            if not run() then return did end
+            local s = playerState()
+            if not s then return did end
+            local key = t.x .. "," .. t.y
+            if stateReaches(s, t.x, t.y, R) and canWorkAt(t.x, t.y) and not (V2.Skip[key] and os.clock() < V2.Skip[key]) then
+                local id = fgIdAt(t.x, t.y)
+                local free = (id == 0)
+                if id ~= 0 and V2.Harvest then
+                    local ra = treeReadyAt(t.x, t.y, id)
+                    if ra and workspace:GetServerTimeNow() >= ra then
+                        say("Pohon siap: " .. itemName(id) .. " (" .. t.x .. "," .. t.y .. ")")
+                        local r, hits = tryBreak(t.x, t.y, false), 0
+                        while r == "hit" and hits < 8 and run() do
+                            hits += 1
+                            task.wait(math.max(V2.PunchMs, 30) / 1000)
+                            r = tryBreak(t.x, t.y, false)
+                        end
+                        if r == "broke" then
+                            V2.Harvested += 1
+                            did += 1
+                            say("Panen " .. itemName(id) .. " (" .. t.x .. "," .. t.y .. ")")
+                            collectWait(run) -- ambil seed / block / gems hasil panen
+                            free = true
+                        else
+                            V2.Skip[key] = os.clock() + 20
+                        end
+                    end
+                end
+                -- tanam langsung di pohon yang barusan dipanen (atau spot kosong)
+                if free and V2.Plant and seed and invCount(seed) > 0 and run()
+                    and fgIdAt(t.x, t.y) == 0 and plantSpotOk(t.x, t.y, seed) then
+                    sendSetTile("fg", t.x, t.y, seed)
+                    if Refs.Inv then pcall(function() Refs.Inv:remove(seed, 1) end) end
+                    V2.Planted += 1
+                    did += 1
+                    say("Tanam " .. itemName(seed) .. " (" .. t.x .. "," .. t.y .. ")")
+                    task.wait(math.max(V2.PlantMs, 30) / 1000)
+                end
+            end
+        end
+        return did
+    end
+
+    local function autoLoop(run)
+        say("Auto Detect berjalan")
+        while run() do
+            local acted = 0
+            if not V2.Home then V2.setHome() end
+            if goHome(run) and run() then
+                collectWait(run) -- drop yang ada diambil dulu sebelum apa pun
+                local id = blockId()
+                if V2.PB and id and invCount(id) > 0 then
+                    V2.AutoPhase = "PNB kiri-kanan"
+                    acted += sidePNB(run)
+                end
+                -- block habis (atau PNB tidak bisa jalan): deteksi pohon siap panen
+                if run() and acted == 0 and (V2.Plant or V2.Harvest) then
+                    V2.AutoPhase = "Detect panen & tanam"
+                    acted += autoHarvestPlant(run)
+                    if acted == 0 and run() then say("Tidak ada pohon siap, menunggu...") end
+                end
+            end
+            if not run() then break end
+            dropStep(run)
+            task.wait(acted > 0 and 0.03 or 0.4)
+        end
+    end
+
     -- ---------- LOOP UTAMA ----------
     local function syncUi()
         if UI.V2Toggle then pcall(function() UI.V2Toggle:Set(V2.Running) end) end
@@ -6952,6 +7111,7 @@ do (function()
 
     local function loop(id)
         local function run() return V2.Running and V2.RunId == id and alive() end
+        if V2.Auto then return autoLoop(run) end
         say("Berjalan")
         while run() do
             local acted = 0
@@ -6980,6 +7140,9 @@ do (function()
         end
         if Pabrik.Running and Pabrik.stop then Pabrik.stop("Dihentikan karena Pabrik V2 dimulai") end
         if State.Running then pcall(stopFarm) end
+        if V2.Auto then
+            if not (V2.Home and V2.Home.world == Guard.worldName()) then V2.setHome() end
+        end
         V2.RunId += 1
         V2.Running = true
         V2.Skip = {}
@@ -7026,6 +7189,8 @@ do (function()
             "Block   : " .. (bid and (itemName(bid) .. " x" .. invCount(bid)) or "belum dipilih"),
             "Seed    : " .. (sid and (itemName(sid) .. " x" .. invCount(sid)) or "belum dipilih"),
             "Blok padat ditentukan: " .. countTiles(),
+            "Auto Detect: " .. (V2.Auto and ("ON - " .. tostring(V2.AutoPhase)) or "off")
+                .. (V2.Home and ("  | posisi awal (" .. V2.Home.x .. "," .. V2.Home.y .. ")") or ""),
             ("Put %d | Break %d | Tanam %d | Panen %d"):format(V2.Placed, V2.Broken, V2.Planted, V2.Harvested),
             ("Collect %d (%s, radius %.1f tile) | Drop %d"):format(V2.Collected, V2.Collect and "ON" or "off", V2.effR(), V2.Dropped),
         }
@@ -15125,6 +15290,7 @@ do (function()
     end)
 
     local bCtl = box(VTab, "Kontrol", true)
+    local bAuto = box(VTab, "Auto Detect (PNB kiri-kanan)", true)
     local bPB = box(VTab, "Put & break di atas kepala", true)
     local bPlant = box(VTab, "Tanam di atas blok padat", true)
     local bCol = box(VTab, "Auto collect (radius tile)", true)
@@ -15165,6 +15331,44 @@ do (function()
         bCtl:Button({
             Title = "Reset statistik V2",
             Callback = function() V2.resetStats() end,
+        })
+    end)
+
+    -- ---- Auto Detect ----
+    safe(function()
+        bAuto:Toggle({
+            Title = "Auto Detect",
+            Desc = "PNB di kiri & kanan (x∆x). Ada drop -> ambil dulu. Block habis -> panen & tanam per pohon, lalu lanjut PNB di posisi awal",
+            Value = V2.Auto,
+            Callback = function(on)
+                V2.Auto = on
+                if on and not V2.Home then V2.setHome() end
+                if V2.Running then -- ganti mode langsung: restart loop dengan mode baru
+                    V2.stop("Ganti mode")
+                    task.wait(0.2)
+                    V2.start()
+                end
+            end,
+        })
+    end)
+    safe(function()
+        bAuto:Button({
+            Title = "Tentukan posisi break (posisi sekarang)",
+            Desc = "Tempat karakter berdiri saat PNB. Setelah panen/tanam selalu balik ke sini",
+            Callback = function()
+                if V2.setHome() then
+                    notify("Pabrik V2", ("Posisi break: (%d,%d)"):format(V2.Home.x, V2.Home.y), 3)
+                else
+                    notify("Pabrik V2", "Kamu belum masuk world", 3)
+                end
+            end,
+        })
+    end)
+    safe(function()
+        bAuto:Button({
+            Title = "Hapus posisi break",
+            Desc = "Posisi awal diambil ulang saat START",
+            Callback = function() V2.Home = nil end,
         })
     end)
 
