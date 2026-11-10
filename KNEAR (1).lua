@@ -1465,12 +1465,14 @@ function H.discover(samples)
                     or string.find(n, "ripe", 1, true) or string.find(n, "mature", 1, true)
                     or (string.find(n, "harvest", 1, true) and string.find(n, "^[cih][ans]") ~= nil)
                 if okName then
-                    for _, variant in ipairs({ "plain", "self" }) do
+                    for _, variant in ipairs({ "plain", "self", "idx" }) do
                         local f
                         if variant == "plain" then
                             f = function(x, y) return v(x, y) end
-                        else
+                        elseif variant == "self" then
                             f = function(x, y) return v(w, x, y) end
+                        else
+                            f = function(x, y) return v(y * w.w + x) end
                         end
                         local good = true
                         for _, t in ipairs(sm) do
@@ -1578,7 +1580,30 @@ function H.ready(x, y, id)
     return false
 end
 
--- Telusuri world: semua tile fg bertipe seed. filterId = hanya seed itu.
+-- tile yang berupa pohon / tanaman (seed, provider, tree, dll)
+function H.isTree(it)
+    if type(it) ~= "table" then return false end
+    local k = string.lower(tostring(it.kind))
+    if string.find(k, "seed", 1, true) or string.find(k, "provider", 1, true)
+        or string.find(k, "tree", 1, true) or string.find(k, "plant", 1, true)
+        or string.find(k, "crop", 1, true) then
+        return true
+    end
+    local hit = false
+    pcall(function()
+        for key, v in pairs(it) do
+            local n = string.lower(tostring(key))
+            if v and (string.find(n, "provider", 1, true) or string.find(n, "fruit", 1, true)
+                or string.find(n, "harvest", 1, true)) then
+                hit = true
+                break
+            end
+        end
+    end)
+    return hit
+end
+
+-- Telusuri world: semua tile fg bertipe pohon. filterId = hanya seed itu.
 function H.scan(filterId)
     local w = Refs.World
     local out, tally = {}, {}
@@ -1592,7 +1617,7 @@ function H.scan(filterId)
                     local sd = H.SeedCache[id]
                     if sd == nil then
                         local it = ItemDB[id]
-                        sd = (type(it) == "table" and it.kind == "seed") or false
+                        sd = H.isTree(it)
                         if type(it) == "table" then H.SeedCache[id] = sd end
                     end
                     if sd then
@@ -1651,11 +1676,11 @@ function H.loop(run)
             continue
         end
 
-        local seeds = H.scan(H.SeedId)
+        local seeds = H.scan((H.SeedId ~= 0) and H.SeedId or nil)
         H.Total = #seeds
         if #seeds == 0 then
             H.ReadyNow = 0
-            say("Tidak ada tanaman " .. itemName(H.SeedId) .. " di world ini")
+            say("Tidak ada tanaman " .. (H.SeedId == 0 and "" or itemName(H.SeedId)) .. " di world ini")
             task.wait(1.5)
             continue
         end
@@ -1836,8 +1861,53 @@ function H.diagnose()
         end
     end)
     add("")
+    -- semua id tile fg di world + tipenya
+    local ids, first = {}, {}
+    for y = 0, w.h - 1 do
+        local row = w.fg[y]
+        if row then
+            for x = 0, w.w - 1 do
+                local id = row[x]
+                if id and id ~= 0 then
+                    if not ids[id] then ids[id] = 0; first[id] = { x = x, y = y } end
+                    ids[id] += 1
+                end
+            end
+        end
+    end
+    add("-- semua tile fg di world (id, nama, kind, jumlah) --")
+    for id, n in pairs(ids) do
+        local it = ItemDB[id]
+        add(("%d  %s  kind=%s  x%d  contoh(%d,%d)"):format(id, itemName(id),
+            tostring(type(it) == "table" and it.kind or "?"), n, first[id].x, first[id].y))
+    end
+    add("")
+    add("-- uji fungsi tanaman bawaan game per id (hanya yang menghasilkan nilai) --")
+    for id, pos in pairs(first) do
+        local line = {}
+        for _, fname in ipairs({ "providerInfo", "providerReady", "providerStage", "treeFruit", "treeLook", "treeNear" }) do
+            local f = rawget(w, fname)
+            if type(f) == "function" then
+                local ok, a, b, c = pcall(f, pos.x, pos.y)
+                local mode = "(x,y)"
+                if not ok then ok, a, b, c = pcall(f, w, pos.x, pos.y); mode = "(w,x,y)" end
+                if not ok then ok, a, b, c = pcall(f, pos.y * w.w + pos.x); mode = "(idx)" end
+                if ok and (a ~= nil and a ~= false) then
+                    line[#line + 1] = fname .. mode .. "=" .. H.dump(a, 2, 12)
+                        .. ((b ~= nil) and (", " .. H.dump(b, 1, 6)) or "")
+                        .. ((c ~= nil) and (", " .. H.dump(c, 1, 6)) or "")
+                end
+            end
+        end
+        if #line > 0 then
+            add(("id %d %s (%d,%d): %s"):format(id, itemName(id), pos.x, pos.y, table.concat(line, " | ")))
+            local it = ItemDB[id]
+            if type(it) == "table" then add("   data item: " .. H.dump(it, 1, 40)) end
+        end
+    end
+    add("")
     local seeds, tally = H.scan(nil)
-    add("-- seed di world --")
+    add("-- pohon terdeteksi di world --")
     for id, n in pairs(tally) do add(("%s [%d] x%d"):format(itemName(id), id, n)) end
     if #seeds > 0 then
         if not H.Det then H.discover(seeds) end
@@ -2113,7 +2183,10 @@ list(seedList, 4)
 
 local seedCounts = {}
 local function seedLabel(id)
-    return string.format("%s   x%d tanaman", itemName(id), seedCounts[id] or 0)
+    if id == 0 then return "SEMUA pohon di world" end
+    local n = seedCounts[id] or 0
+    if n == 0 then return string.format("%s   (inventori, belum ada di world)", itemName(id)) end
+    return string.format("%s   x%d tanaman", itemName(id), n)
 end
 local function setSeed(id)
     H.SeedId = id
@@ -2130,10 +2203,17 @@ local function populateSeeds()
     if gameReady() then
         local ok, _, tally = pcall(H.scan, nil)
         if ok and type(tally) == "table" then seedCounts = tally end
+        pcall(function()
+            for _, id in ipairs(UI.invSlotIds()) do
+                local it = ItemDB[id]
+                if type(it) == "table" and it.kind == "seed" and not seedCounts[id] then seedCounts[id] = 0 end
+            end
+        end)
     end
     local ids = {}
     for id in pairs(seedCounts) do ids[#ids + 1] = id end
     table.sort(ids)
+    if #ids > 0 then table.insert(ids, 1, 0) end
     if #ids == 0 then
         label(seedList, { Size = UDim2.new(1, 0, 0, 30), Text = gameReady() and "Tidak ada seed tertanam di world ini" or "Belum terhubung ke game",
             TextColor3 = C.sub, TextSize = 13, TextXAlignment = Enum.TextXAlignment.Center })
