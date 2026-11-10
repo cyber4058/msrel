@@ -1,10 +1,8 @@
--- K. NEAR
--- Statistik ping milik author lama DIMATIKAN (API kosong = tidak ada data yang dikirim keluar).
--- Kalau kamu punya Worker sendiri, isi URL-nya di sini.
-local API = ""
+-- Tempel di baris paling atas script kamu (sebelum kode lain).
+-- Ganti API dengan URL Worker kamu.
+local API = "https://status.koplak132asu.workers.dev"
 
 task.spawn(function()
-    if API == "" then return end
     local HttpService = game:GetService("HttpService")
     local req = (syn and syn.request) or (http and http.request) or http_request or request
     if not req then return end
@@ -145,9 +143,9 @@ do
         report[#report + 1] = n .. "=" .. (Found[n] and "ok" or "HILANG")
     end
     Session.ResolveReport = table.concat(report, " ")
-    print("[K. NEAR] resolver modul: " .. Session.ResolveReport)
-    if not Found.ItemDB then warn("[K. NEAR] ItemDB tidak ditemukan, nama item tidak tersedia") end
-    if not Found.Inventory then warn("[K. NEAR] modul Inventory tidak ditemukan, fitur inventori bisa tidak jalan") end
+    print("[SkyP] resolver modul: " .. Session.ResolveReport)
+    if not Found.ItemDB then warn("[SkyP] ItemDB tidak ditemukan, nama item tidak tersedia") end
+    if not Found.Inventory then warn("[SkyP] modul Inventory tidak ditemukan, fitur inventori bisa tidak jalan") end
 end
 
 -- PATCH ItemDB: tabel lokal diisi dari sumber yang ketemu (modul / sub-tabel / getgc).
@@ -240,10 +238,10 @@ do
                 local it = rawget(best, id)
                 if type(it) == "table" then rawset(ItemDB, id, it) end
             end
-            print("[K. NEAR] ItemDB dicocokkan ulang dari isi tas (skor " .. bestSc .. "/" .. (#ids * 2) .. ")")
+            print("[SkyP] ItemDB dicocokkan ulang dari isi tas (skor " .. bestSc .. "/" .. (#ids * 2) .. ")")
             return true
         end
-        warn("[K. NEAR] ItemDB tidak cocok dengan isi tas")
+        warn("[SkyP] ItemDB tidak cocok dengan isi tas")
         return false
     end
     local last = os.clock()
@@ -256,8 +254,8 @@ do
     end })
     if not scan() then
         task.delay(3, function()
-            if scan() then print("[K. NEAR] ItemDB ketemu (cari ulang)") else
-                warn("[K. NEAR] ItemDB masih belum ketemu, item ditampilkan sebagai Item #id") end
+            if scan() then print("[SkyP] ItemDB ketemu (cari ulang)") else
+                warn("[SkyP] ItemDB masih belum ketemu, item ditampilkan sebagai Item #id") end
         end)
     end
 end
@@ -270,63 +268,9 @@ local MenuModOk, MenuModule = Session.Found.Menu ~= nil, Session.Found.Menu
 local RolesOk, RolesModule = Session.Found.Roles ~= nil, Session.Found.Roles
 local SfxOk, SfxModule = Session.Found.Sfx ~= nil, Session.Found.Sfx
 
--- =====================================================================
--- TEMA K. NEAR: ganti satu kata di bawah  ->  "merah" | "hitamputih" | "rgb"
---   merah      = hitam + merah
---   hitamputih = hitam + putih/abu
---   rgb        = hitam + merah, border/judul/garis header berganti warna pelangi
--- =====================================================================
-do
-    local THEME = "rgb"
-    local T = {
-        merah = {
-            bg = {6, 3, 4}, side = {14, 7, 9}, card = {23, 11, 14}, card2 = {36, 16, 20}, line = {78, 30, 36},
-            accent = {230, 26, 46}, accentHi = {255, 130, 140}, accentLo = {120, 12, 24},
-            text = {252, 244, 245}, sub = {188, 150, 155}, off = {26, 12, 15}, row2 = {46, 21, 26},
-            mode2 = {190, 22, 42}, mode3 = {255, 255, 255}, danger = {190, 100, 12},
-        },
-        hitamputih = {
-            bg = {0, 0, 0}, side = {10, 10, 10}, card = {19, 19, 19}, card2 = {30, 30, 30}, line = {85, 85, 85},
-            accent = {118, 118, 118}, accentHi = {255, 255, 255}, accentLo = {60, 60, 60},
-            text = {255, 255, 255}, sub = {176, 176, 176}, off = {22, 22, 22}, row2 = {38, 38, 38},
-            mode2 = {160, 160, 160}, mode3 = {90, 90, 90}, danger = {70, 70, 70},
-        },
-    }
-    T.rgb = {}
-    for k, v in pairs(T.merah) do T.rgb[k] = v end
-    local src = T[THEME] or T.merah
-    local P = {}
-    for k, v in pairs(src) do P[k] = Color3.fromRGB(v[1], v[2], v[3]) end
-    P.rgb = (THEME == "rgb")
-    P.list = {}
-    function P.fx(inst, prop)
-        if P.rgb and inst then table.insert(P.list, { inst, prop }) end
-        return inst
-    end
-    _G.__KNP = P
-    if _G.__KNP_CONN then pcall(function() _G.__KNP_CONN:Disconnect() end) end
-    if P.rgb then
-        local last = 0
-        _G.__KNP_CONN = RunService.Heartbeat:Connect(function()
-            local now = os.clock()
-            if now - last < 0.033 then return end
-            last = now
-            local col = Color3.fromHSV((now * 0.18) % 1, 0.85, 1)
-            for i = #P.list, 1, -1 do
-                local e = P.list[i]
-                if e[1].Parent == nil then
-                    table.remove(P.list, i)
-                else
-                    pcall(function() e[1][e[2]] = col end)
-                end
-            end
-        end)
-    end
-end
-
--- UI: library bawaan (KNearUI), tidak lagi download dari luar
+-- UI: library bawaan (SkyUI, tema biru), tidak lagi download dari luar
 local WindUI = (function()
--- KNearUI: library UI bawaan K. NEAR (tema cyber-black). API kompatibel dengan pemanggilan lama.
+-- SkyUI: library UI bawaan SkyP (tema biru). API kompatibel dengan pemanggilan lama.
 -- Window / Section / Tab / Toggle / Button / Input / Slider / Dropdown / Paragraph, Notify, Popup.
 local TS = game:GetService("TweenService")
 local UIS = game:GetService("UserInputService")
@@ -334,25 +278,19 @@ local UIS = game:GetService("UserInputService")
 local Lib = { _guis = {}, _conns = {}, _open = nil, Text = {}, Logo = "" }
 
 local K = {
-    bg = _G.__KNP.bg,
-    side = _G.__KNP.side,
-    card = _G.__KNP.card,
-    card2 = _G.__KNP.card2,
-    line = _G.__KNP.line,
-    accent = _G.__KNP.accent,
-    accentHi = _G.__KNP.accentHi,
-    accentLo = _G.__KNP.accentLo,
-    text = _G.__KNP.text,
-    sub = _G.__KNP.sub,
+    bg = Color3.fromRGB(8, 12, 22),
+    side = Color3.fromRGB(11, 17, 32),
+    card = Color3.fromRGB(16, 24, 44),
+    card2 = Color3.fromRGB(23, 34, 62),
+    line = Color3.fromRGB(32, 47, 82),
+    accent = Color3.fromRGB(47, 125, 255),
+    accentHi = Color3.fromRGB(110, 175, 255),
+    accentLo = Color3.fromRGB(22, 58, 130),
+    text = Color3.fromRGB(232, 239, 253),
+    sub = Color3.fromRGB(128, 148, 186),
     white = Color3.new(1, 1, 1),
 }
-local function pickFont(name, fb)
-    local ok, v = pcall(function() return Enum.Font[name] end)
-    return (ok and v) or fb
-end
-local FB = pickFont("Oswald", Enum.Font.SourceSansBold)
-local F = FB
-local FM = FB
+local F, FM, FB = Enum.Font.Gotham, Enum.Font.GothamMedium, Enum.Font.GothamBold
 local LEFT, RIGHT = Enum.TextXAlignment.Left, Enum.TextXAlignment.Right
 local AUTO_Y, AUTO_X = Enum.AutomaticSize.Y, Enum.AutomaticSize.X
 
@@ -393,7 +331,7 @@ end
 
 local function text(parent, props)
     local p = {
-        BackgroundTransparency = 1, Font = F, TextSize = 15, TextColor3 = K.text,
+        BackgroundTransparency = 1, Font = F, TextSize = 12, TextColor3 = K.text,
         TextXAlignment = LEFT, Text = "", BorderSizePixel = 0,
     }
     for k, v in pairs(props) do p[k] = v end
@@ -409,7 +347,7 @@ local function fire(cb, a)
     if type(cb) ~= "function" then return end
     task.spawn(function()
         local ok, e = pcall(cb, a)
-        if not ok then warn("[K. NEAR] UI callback: " .. tostring(e)) end
+        if not ok then warn("[SkyP] UI callback: " .. tostring(e)) end
     end)
 end
 
@@ -489,7 +427,7 @@ local function resolveLogo()
     elseif l:match("^https?://") then
         pcall(function()
             local data = game:HttpGet(l)
-            local name = "knear_logo_" .. tostring(#l) .. ".png"
+            local name = "skyp_logo_" .. tostring(#l) .. ".png"
             writefile(name, data)
             img = getcustomasset(name)
         end)
@@ -500,8 +438,7 @@ end
 
 local function badge(parent, size, textSize)
     local b = mk("Frame", { Size = UDim2.fromOffset(size, size), BackgroundColor3 = K.accent, BorderSizePixel = 0 }, parent)
-    round(b, 3)
-    outline(b, K.accent, 1, 0.1)
+    round(b, math.floor(size * 0.3))
     local img = resolveLogo()
     if img then
         b.BackgroundColor3 = K.bg
@@ -509,14 +446,14 @@ local function badge(parent, size, textSize)
             Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, Image = img,
             ScaleType = Enum.ScaleType.Crop, BorderSizePixel = 0,
         }, b)
-        round(il, 3)
+        round(il, math.floor(size * 0.3))
         return b
     end
     mk("UIGradient", {
         Color = ColorSequence.new(K.accentHi, K.accent), Rotation = 45,
     }, b)
     text(b, {
-        Size = UDim2.fromScale(1, 1), Text = "K", Font = FB, TextSize = textSize or 15,
+        Size = UDim2.fromScale(1, 1), Text = "S", Font = FB, TextSize = textSize or 15,
         TextColor3 = K.white, TextXAlignment = Enum.TextXAlignment.Center,
     })
     return b
@@ -529,13 +466,13 @@ local toastHolder
 function Lib:Notify(cfg)
     cfg = cfg or {}
     if not toastHolder or not toastHolder.Parent then
-        local g = newGui("KNEAR_Toast", 1000)
+        local g = newGui("SkyP_Toast", 1000)
         toastHolder = mk("Frame", {
-            BackgroundTransparency = 1, AnchorPoint = Vector2.new(0, 1),
-            Position = UDim2.new(0, 14, 1, -14), Size = UDim2.fromOffset(280, 0), AutomaticSize = AUTO_Y,
+            BackgroundTransparency = 1, AnchorPoint = Vector2.new(1, 0),
+            Position = UDim2.new(1, -14, 0, 56), Size = UDim2.fromOffset(280, 0), AutomaticSize = AUTO_Y,
         }, g)
         local l = vlist(toastHolder, 8)
-        l.HorizontalAlignment = Enum.HorizontalAlignment.Left
+        l.HorizontalAlignment = Enum.HorizontalAlignment.Right
     end
     local kids = {}
     for _, c in ipairs(toastHolder:GetChildren()) do
@@ -548,20 +485,20 @@ function Lib:Notify(cfg)
         Size = UDim2.new(1, 0, 0, 0), AutomaticSize = AUTO_Y, BackgroundColor3 = K.card,
         BackgroundTransparency = 1, ClipsDescendants = true, BorderSizePixel = 0,
     }, toastHolder)
-    round(toast, 3)
+    round(toast, 10)
     local st = outline(toast, K.line, 1, 1)
     local inner = mk("Frame", {
         Size = UDim2.new(1, 0, 0, 0), AutomaticSize = AUTO_Y, BackgroundTransparency = 1, BorderSizePixel = 0,
     }, toast)
-    pad(inner, 12, 10, 14, 12)
+    pad(inner, 14, 10, 12, 12)
     vlist(inner, 2)
-    mk("Frame", { AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, 0, 0, 0), Size = UDim2.new(0, 3, 1, 0), BackgroundColor3 = K.accent, BorderSizePixel = 0 }, toast)
+    mk("Frame", { Size = UDim2.new(0, 3, 1, 0), BackgroundColor3 = K.accent, BorderSizePixel = 0 }, toast)
     local tl = text(inner, {
-        Size = UDim2.new(1, 0, 0, 0), AutomaticSize = AUTO_Y, Font = FB, TextSize = 15,
+        Size = UDim2.new(1, 0, 0, 0), AutomaticSize = AUTO_Y, Font = FB, TextSize = 13,
         Text = strOf(cfg.Title), TextWrapped = true, TextTransparency = 1, LayoutOrder = 1,
     })
     local cl = text(inner, {
-        Size = UDim2.new(1, 0, 0, 0), AutomaticSize = AUTO_Y, TextSize = 15, TextColor3 = K.sub,
+        Size = UDim2.new(1, 0, 0, 0), AutomaticSize = AUTO_Y, TextSize = 12, TextColor3 = K.sub,
         Text = strOf(cfg.Content), TextWrapped = true, TextTransparency = 1, LayoutOrder = 2,
         Visible = strOf(cfg.Content) ~= "",
     })
@@ -594,7 +531,7 @@ end
 ---------------------------------------------------------------------
 function Lib:Popup(cfg)
     cfg = cfg or {}
-    local g = newGui("KNEAR_Popup", 1001)
+    local g = newGui("SkyP_Popup", 1001)
     local dim = mk("TextButton", {
         Size = UDim2.fromScale(1, 1), BackgroundColor3 = Color3.new(0, 0, 0), BackgroundTransparency = 1,
         Text = "", AutoButtonColor = false, BorderSizePixel = 0,
@@ -605,7 +542,7 @@ function Lib:Popup(cfg)
         Size = UDim2.fromOffset(330, 0), AutomaticSize = AUTO_Y, BackgroundColor3 = K.bg,
         BorderSizePixel = 0, Active = true,
     }, dim)
-    round(card, 4)
+    round(card, 14)
     outline(card, K.line, 1)
     pad(card, 18, 18, 18, 16)
     vlist(card, 12)
@@ -616,13 +553,13 @@ function Lib:Popup(cfg)
     local b = badge(head, 28, 15)
     b.Position = UDim2.fromOffset(0, 1)
     text(head, {
-        Position = UDim2.fromOffset(38, 0), Size = UDim2.new(1, -38, 1, 0), Font = FB, TextSize = 17,
+        Position = UDim2.fromOffset(38, 0), Size = UDim2.new(1, -38, 1, 0), Font = FB, TextSize = 16,
         Text = strOf(cfg.Title),
     })
     local content = strOf(cfg.Content)
     if content ~= "" then
         text(card, {
-            Size = UDim2.new(1, 0, 0, 0), AutomaticSize = AUTO_Y, TextSize = 15, TextColor3 = K.sub,
+            Size = UDim2.new(1, 0, 0, 0), AutomaticSize = AUTO_Y, TextSize = 13, TextColor3 = K.sub,
             TextWrapped = true, Text = content, LayoutOrder = 2,
         })
     end
@@ -639,9 +576,9 @@ function Lib:Popup(cfg)
             local btn = mk("TextButton", {
                 Size = UDim2.new(1 / n, -math.floor(8 * (n - 1) / n), 1, 0), LayoutOrder = i,
                 BackgroundColor3 = primary and K.accent or K.card2, AutoButtonColor = false,
-                Text = strOf(bd.Title), Font = FB, TextSize = 15, TextColor3 = K.white, BorderSizePixel = 0,
+                Text = strOf(bd.Title), Font = FB, TextSize = 13, TextColor3 = K.white, BorderSizePixel = 0,
             }, rowf)
-            round(btn, 3)
+            round(btn, 9)
             if not primary then outline(btn, K.line, 1) end
             btn.MouseEnter:Connect(function()
                 tween(btn, 0.12, { BackgroundColor3 = primary and K.accentHi or K.line })
@@ -674,7 +611,7 @@ local function baseRow(self, cfg, rightW)
         BackgroundColor3 = self._rowColor, Size = UDim2.new(1, 0, 0, 0), AutomaticSize = AUTO_Y,
         LayoutOrder = nextOrder(self), BorderSizePixel = 0,
     }, self._holder)
-    round(row, 3)
+    round(row, 8)
     outline(row, K.line, 1, 0.45)
     pad(row, 12, 9, 12, 9)
     vlist(row, 8)
@@ -689,11 +626,11 @@ local function baseRow(self, cfg, rightW)
     vlist(info, 2)
     local title, desc = strOf(cfg.Title), strOf(cfg.Desc)
     local tl = text(info, {
-        Size = UDim2.new(1, 0, 0, 0), AutomaticSize = AUTO_Y, Font = FM, TextSize = 15,
+        Size = UDim2.new(1, 0, 0, 0), AutomaticSize = AUTO_Y, Font = FM, TextSize = 13,
         TextWrapped = true, Text = title, LayoutOrder = 1,
     })
     local dl = text(info, {
-        Size = UDim2.new(1, 0, 0, 0), AutomaticSize = AUTO_Y, TextSize = 14, TextColor3 = K.sub,
+        Size = UDim2.new(1, 0, 0, 0), AutomaticSize = AUTO_Y, TextSize = 11, TextColor3 = K.sub,
         TextWrapped = true, Text = desc, Visible = desc ~= "", LayoutOrder = 2,
     })
     return row, tl, dl, topf
@@ -746,8 +683,8 @@ function Methods:Paragraph(cfg)
     local row, tl, dl, topf = baseRow(self, cfg, 0)
     tl.TextColor3 = K.accentHi
     tl.Font = FB
-    tl.TextSize = 15
-    dl.TextSize = 15
+    tl.TextSize = 12
+    dl.TextSize = 12
     dl.TextColor3 = K.text
     mk("Frame", {
         Size = UDim2.new(0, 3, 1, 0), Position = UDim2.new(0, -12, 0, 0),
@@ -764,13 +701,13 @@ function Methods:Toggle(cfg)
         AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, 0, 0.5, 0),
         Size = UDim2.fromOffset(42, 22), BackgroundColor3 = K.bg, BorderSizePixel = 0,
     }, topf)
-    round(trk, 3)
+    round(trk, 11)
     local trkLine = outline(trk, K.line, 1)
     local knob = mk("Frame", {
         Size = UDim2.fromOffset(16, 16), Position = UDim2.fromOffset(3, 3),
         BackgroundColor3 = K.sub, BorderSizePixel = 0,
     }, trk)
-    round(knob, 2)
+    round(knob, 8)
 
     local obj = { Value = cfg.Value == true, Callback = cfg.Callback }
     local function paint(instant)
@@ -805,12 +742,12 @@ end
 function Methods:Button(cfg)
     cfg = cfg or {}
     local row, tl, dl, topf = baseRow(self, cfg, 26)
-    local base = (self._rowColor == K.card) and K.card2 or _G.__KNP.row2
+    local base = (self._rowColor == K.card) and K.card2 or Color3.fromRGB(31, 46, 82)
     row.BackgroundColor3 = base
     local hit = hitbox(topf)
     text(topf, {
         AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, 0, 0.5, 0), Size = UDim2.fromOffset(20, 24),
-        Text = "»", Font = FB, TextSize = 20, TextColor3 = K.accent, TextXAlignment = RIGHT,
+        Text = "›", Font = FB, TextSize = 22, TextColor3 = K.accentHi, TextXAlignment = RIGHT,
     })
     local obj = { Callback = cfg.Callback }
     hit.MouseEnter:Connect(function() tween(row, 0.12, { BackgroundColor3 = K.accentLo }) end)
@@ -837,10 +774,10 @@ function Methods:Input(cfg)
         Position = narrow and UDim2.new() or UDim2.new(1, 0, 0.5, 0),
         Size = narrow and UDim2.new(1, 0, 1, 0) or UDim2.fromOffset(160, 28),
         BackgroundColor3 = K.bg, Text = strOf(cfg.Value), PlaceholderText = strOf(cfg.Placeholder),
-        PlaceholderColor3 = K.sub, TextColor3 = K.text, Font = FM, TextSize = 15, ClearTextOnFocus = false,
+        PlaceholderColor3 = K.sub, TextColor3 = K.text, Font = FM, TextSize = 12, ClearTextOnFocus = false,
         TextXAlignment = LEFT, TextTruncate = Enum.TextTruncate.AtEnd, BorderSizePixel = 0,
     }, slot)
-    round(box, 2)
+    round(box, 6)
     local st = outline(box, K.line, 1)
     pad(box, 8, 0, 8, 0)
     box.Focused:Connect(function() st.Color = K.accent end)
@@ -869,7 +806,7 @@ function Methods:Slider(cfg)
     local row, tl, dl, topf = baseRow(self, cfg, 66)
     local vl = text(topf, {
         AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, 0, 0.5, 0), Size = UDim2.fromOffset(60, 20),
-        Font = FB, TextSize = 15, TextColor3 = K.accentHi, TextXAlignment = RIGHT,
+        Font = FB, TextSize = 13, TextColor3 = K.accentHi, TextXAlignment = RIGHT,
     })
     local holder = mk("Frame", {
         BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 18), LayoutOrder = 2, Active = true,
@@ -878,14 +815,14 @@ function Methods:Slider(cfg)
         AnchorPoint = Vector2.new(0, 0.5), Position = UDim2.new(0, 0, 0.5, 0), Size = UDim2.new(1, 0, 0, 6),
         BackgroundColor3 = K.bg, BorderSizePixel = 0,
     }, holder)
-    round(bar, 0)
+    round(bar, 3)
     local fill = mk("Frame", { Size = UDim2.new(0, 0, 1, 0), BackgroundColor3 = K.accent, BorderSizePixel = 0 }, bar)
-    round(fill, 0)
+    round(fill, 3)
     local knob = mk("Frame", {
-        AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.new(0, 0, 0.5, 0), Size = UDim2.fromOffset(11, 11), Rotation = 45,
+        AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.new(0, 0, 0.5, 0), Size = UDim2.fromOffset(14, 14),
         BackgroundColor3 = K.white, BorderSizePixel = 0,
     }, bar)
-    round(knob, 1)
+    round(knob, 7)
     outline(knob, K.accent, 2)
 
     local obj = { Value = def, Callback = cfg.Callback }
@@ -970,15 +907,15 @@ function Methods:Dropdown(cfg)
         Size = narrow and UDim2.new(1, 0, 1, 0) or UDim2.fromOffset(160, 28),
         BackgroundColor3 = K.bg, Text = "", AutoButtonColor = false, BorderSizePixel = 0,
     }, slot)
-    round(btn, 2)
+    round(btn, 6)
     local st = outline(btn, K.line, 1)
     local vl = text(btn, {
-        Position = UDim2.fromOffset(8, 0), Size = UDim2.new(1, -26, 1, 0), Font = FM, TextSize = 15,
+        Position = UDim2.fromOffset(8, 0), Size = UDim2.new(1, -26, 1, 0), Font = FM, TextSize = 12,
         TextTruncate = Enum.TextTruncate.AtEnd,
     })
     text(btn, {
         AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -8, 0.5, 0), Size = UDim2.fromOffset(10, 10),
-        Text = "▼", TextSize = 11, TextColor3 = K.accentHi, TextXAlignment = Enum.TextXAlignment.Center,
+        Text = "▼", TextSize = 8, TextColor3 = K.accentHi, TextXAlignment = Enum.TextXAlignment.Center,
     })
 
     local obj = {
@@ -1083,7 +1020,7 @@ function Methods:Dropdown(cfg)
             Position = UDim2.fromOffset(x, y), Size = UDim2.fromOffset(pw, ph), BackgroundColor3 = K.card,
             BorderSizePixel = 0, Active = true, ClipsDescendants = true,
         }, blocker)
-        round(pop, 3)
+        round(pop, 9)
         outline(pop, K.accent, 1, 0.3)
 
         local filter = ""
@@ -1120,7 +1057,7 @@ function Methods:Dropdown(cfg)
                     end
                     text(it, {
                         Position = UDim2.fromOffset(22, 0), Size = UDim2.new(1, -28, 1, 0), Text = v, Font = FM,
-                        TextSize = 15, TextColor3 = on and K.white or K.text,
+                        TextSize = 12, TextColor3 = on and K.white or K.text,
                         TextTruncate = Enum.TextTruncate.AtEnd,
                     })
                     it.MouseEnter:Connect(function()
@@ -1162,7 +1099,7 @@ function Methods:Dropdown(cfg)
             local sb = mk("TextBox", {
                 Position = UDim2.fromOffset(6, 6), Size = UDim2.new(1, -12, 0, 26), BackgroundColor3 = K.bg,
                 Text = "", PlaceholderText = T("Search", "Cari..."), PlaceholderColor3 = K.sub, TextColor3 = K.text,
-                Font = FM, TextSize = 15, ClearTextOnFocus = false, TextXAlignment = LEFT, BorderSizePixel = 0,
+                Font = FM, TextSize = 12, ClearTextOnFocus = false, TextXAlignment = LEFT, BorderSizePixel = 0,
             }, pop)
             round(sb, 6)
             pad(sb, 8, 0, 8, 0)
@@ -1202,7 +1139,7 @@ function Methods:Section(cfg)
         BackgroundColor3 = K.card, Size = UDim2.new(1, 0, 0, 0), AutomaticSize = AUTO_Y,
         LayoutOrder = nextOrder(self), BorderSizePixel = 0,
     }, self._holder)
-    round(root, 4)
+    round(root, 10)
     outline(root, K.line, 1, 0.2)
     vlist(root, 0)
     local head = mk("TextButton", {
@@ -1214,12 +1151,12 @@ function Methods:Section(cfg)
         BackgroundColor3 = K.accent, BorderSizePixel = 0,
     }, head)
     text(head, {
-        Position = UDim2.fromOffset(24, 0), Size = UDim2.new(1, -50, 1, 0), Font = FB, TextSize = 15,
+        Position = UDim2.fromOffset(24, 0), Size = UDim2.new(1, -50, 1, 0), Font = FB, TextSize = 13,
         Text = strOf(cfg.Title),
     })
     local arrow = text(head, {
         AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -12, 0.5, 0), Size = UDim2.fromOffset(14, 14),
-        TextSize = 12, TextColor3 = K.accentHi, TextXAlignment = Enum.TextXAlignment.Center,
+        TextSize = 9, TextColor3 = K.accentHi, TextXAlignment = Enum.TextXAlignment.Center,
     })
     local content = mk("Frame", {
         BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 0), AutomaticSize = AUTO_Y, LayoutOrder = 2,
@@ -1258,7 +1195,7 @@ function Lib:CreateWindow(cfg)
         for k, v in pairs(cfg.Text) do Lib.Text[k] = v end
     end
     local Win = { Visible = true, _tabs = {}, _query = "", ToggleKey = cfg.ToggleKey }
-    local gui = newGui("KNEAR_UI", 998)
+    local gui = newGui("SkyP_UI", 998)
     Win._gui = gui
 
     local cam = workspace.CurrentCamera
@@ -1274,68 +1211,62 @@ function Lib:CreateWindow(cfg)
         Name = "Main", AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5),
         Size = UDim2.fromOffset(W, H), BackgroundColor3 = K.side, BorderSizePixel = 0, Active = true,
     }, gui)
-    round(main, 3)
-    _G.__KNP.fx(outline(main, K.accent, 2, 0.05), "Color")
+    round(main, 12)
+    outline(main, K.line, 1)
     local scale = mk("UIScale", { Scale = 1 }, main)
 
     -- header
-    local header = mk("Frame", { Size = UDim2.new(1, 0, 0, 52), BackgroundTransparency = 1, Active = true }, main)
-    do
-        local ln = mk("Frame", { AnchorPoint = Vector2.new(0, 1), Position = UDim2.new(0, 0, 1, 0), Size = UDim2.new(1, 0, 0, 2), BackgroundColor3 = K.accent, BorderSizePixel = 0 }, header)
-        _G.__KNP.fx(ln, "BackgroundColor3")
-        mk("UIGradient", { Color = ColorSequence.new(Color3.new(1, 1, 1), _G.__KNP.bg), Transparency = NumberSequence.new({ NumberSequenceKeypoint.new(0, 0), NumberSequenceKeypoint.new(1, 1) }) }, ln)
-    end
-    local lg = badge(header, 34, 18)
-    lg.Position = UDim2.fromOffset(10, 9)
-    local titleLbl = text(header, {
-        Position = UDim2.fromOffset(54, 6), Size = UDim2.new(1, -110, 0, 22), Font = FB, TextSize = 19,
-        Text = strOf(cfg.Title):upper(),
+    local header = mk("Frame", { Size = UDim2.new(1, 0, 0, 48), BackgroundTransparency = 1, Active = true }, main)
+    local lg = badge(header, 30, 16)
+    lg.Position = UDim2.fromOffset(12, 9)
+    text(header, {
+        Position = UDim2.fromOffset(52, 7), Size = UDim2.new(1, -110, 0, 18), Font = FB, TextSize = 15,
+        Text = strOf(cfg.Title),
     })
-    _G.__KNP.fx(titleLbl, "TextColor3")
     local author = strOf(cfg.Author):gsub("^https?://", "")
     text(header, {
-        Position = UDim2.fromOffset(54, 29), Size = UDim2.new(1, -110, 0, 14), TextSize = 14, TextColor3 = K.accent,
+        Position = UDim2.fromOffset(52, 25), Size = UDim2.new(1, -110, 0, 14), TextSize = 10, TextColor3 = K.sub,
         Text = author, TextTruncate = Enum.TextTruncate.AtEnd,
     })
     local minBtn = mk("TextButton", {
         AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -12, 0.5, 0), Size = UDim2.fromOffset(30, 30),
-        BackgroundColor3 = K.card2, Text = "×", Font = FB, TextSize = 20, TextColor3 = K.accentHi,
+        BackgroundColor3 = K.card2, Text = "–", Font = FB, TextSize = 18, TextColor3 = K.text,
         AutoButtonColor = false, BorderSizePixel = 0,
     }, header)
-    round(minBtn, 2)
+    round(minBtn, 8)
     minBtn.MouseEnter:Connect(function() tween(minBtn, 0.12, { BackgroundColor3 = K.accentLo }) end)
     minBtn.MouseLeave:Connect(function() tween(minBtn, 0.12, { BackgroundColor3 = K.card2 }) end)
     makeDraggable(header, main, 0)
 
     -- sidebar
     local side = mk("Frame", {
-        Position = UDim2.new(1, -SW, 0, 52), Size = UDim2.new(0, SW, 1, -52), BackgroundTransparency = 1,
+        Position = UDim2.fromOffset(0, 48), Size = UDim2.new(0, SW, 1, -48), BackgroundTransparency = 1,
     }, main)
     local search = mk("TextBox", {
-        Position = UDim2.new(0, 6, 1, -38), Size = UDim2.new(1, -14, 0, 30), BackgroundColor3 = K.bg,
+        Position = UDim2.fromOffset(10, 0), Size = UDim2.new(1, -16, 0, 30), BackgroundColor3 = K.bg,
         Text = "", PlaceholderText = strOf(cfg.SearchPlaceholder) ~= "" and cfg.SearchPlaceholder or T("Search", "Cari fitur..."),
-        PlaceholderColor3 = K.sub, TextColor3 = K.text, Font = FM, TextSize = 15, ClearTextOnFocus = false,
+        PlaceholderColor3 = K.sub, TextColor3 = K.text, Font = FM, TextSize = 12, ClearTextOnFocus = false,
         TextXAlignment = LEFT, BorderSizePixel = 0,
     }, side)
-    round(search, 2)
+    round(search, 8)
     local searchLine = outline(search, K.line, 1)
     pad(search, 10, 0, 10, 0)
     search.Focused:Connect(function() searchLine.Color = K.accent end)
     search.FocusLost:Connect(function() searchLine.Color = K.line end)
     local sideList = mk("ScrollingFrame", {
-        Position = UDim2.fromOffset(0, 4), Size = UDim2.new(1, 0, 1, -48), BackgroundTransparency = 1,
+        Position = UDim2.fromOffset(0, 38), Size = UDim2.new(1, 0, 1, -42), BackgroundTransparency = 1,
         BorderSizePixel = 0, CanvasSize = UDim2.new(), AutomaticCanvasSize = Enum.AutomaticSize.Y,
         ScrollBarThickness = 2, ScrollBarImageColor3 = K.accent, ScrollingDirection = Enum.ScrollingDirection.Y,
     }, side)
-    pad(sideList, 6, 0, 8, 6)
+    pad(sideList, 10, 0, 6, 6)
     vlist(sideList, 3)
 
     -- area isi
     local panel = mk("Frame", {
-        Position = UDim2.new(0, 8, 0, 52), Size = UDim2.new(1, -SW - 14, 1, -60), BackgroundColor3 = K.bg,
+        Position = UDim2.new(0, SW, 0, 48), Size = UDim2.new(1, -SW - 8, 1, -56), BackgroundColor3 = K.bg,
         BorderSizePixel = 0, ClipsDescendants = true,
     }, main)
-    round(panel, 2)
+    round(panel, 10)
     outline(panel, K.line, 1, 0.3)
 
     local orderN = 0
@@ -1365,14 +1296,14 @@ function Lib:CreateWindow(cfg)
             Size = UDim2.new(1, 0, 0, 32), BackgroundColor3 = K.accentLo, BackgroundTransparency = 1,
             Text = "", AutoButtonColor = false, BorderSizePixel = 0, LayoutOrder = nextSide(),
         }, holder)
-        round(btn, 2)
+        round(btn, 8)
         local bar = mk("Frame", {
-            AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, 0, 0.5, 0), Size = UDim2.fromOffset(3, 18),
+            AnchorPoint = Vector2.new(0, 0.5), Position = UDim2.new(0, 0, 0.5, 0), Size = UDim2.fromOffset(3, 16),
             BackgroundColor3 = K.accentHi, BorderSizePixel = 0, Visible = false,
         }, btn)
         round(bar, 2)
         local label = text(btn, {
-            Position = UDim2.fromOffset(10, 0), Size = UDim2.new(1, -18, 1, 0), Font = FM, TextSize = 16,
+            Position = UDim2.fromOffset(14, 0), Size = UDim2.new(1, -18, 1, 0), Font = FM, TextSize = 13,
             TextColor3 = K.sub, Text = strOf(tcfg.Title), TextTruncate = Enum.TextTruncate.AtEnd,
         })
         local page = mk("ScrollingFrame", {
@@ -1442,12 +1373,12 @@ function Lib:CreateWindow(cfg)
             LayoutOrder = 1,
         }, root)
         text(head, {
-            Position = UDim2.fromOffset(6, 0), Size = UDim2.new(1, -26, 1, 0), Font = FB, TextSize = 13,
+            Position = UDim2.fromOffset(6, 0), Size = UDim2.new(1, -26, 1, 0), Font = FB, TextSize = 10,
             TextColor3 = K.accentHi, Text = strOf(scfg.Title):upper(), TextTruncate = Enum.TextTruncate.AtEnd,
         })
         local arrow = text(head, {
             AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -6, 0.5, 0), Size = UDim2.fromOffset(12, 12),
-            TextSize = 17, Font = FB, TextColor3 = K.accent, TextXAlignment = Enum.TextXAlignment.Center,
+            TextSize = 8, TextColor3 = K.sub, TextXAlignment = Enum.TextXAlignment.Center,
         })
         local tabsHolder = mk("Frame", {
             Size = UDim2.new(1, 0, 0, 0), AutomaticSize = AUTO_Y, BackgroundTransparency = 1, LayoutOrder = 2,
@@ -1457,7 +1388,7 @@ function Lib:CreateWindow(cfg)
         function grp:Open(v)
             self.opened = v ~= false
             tabsHolder.Visible = self.opened
-            arrow.Text = self.opened and "−" or "+"
+            arrow.Text = self.opened and "▼" or "▶"
         end
         grp:Open(grp.opened)
         head.MouseButton1Click:Connect(function() grp:Open(not grp.opened) end)
@@ -1472,12 +1403,12 @@ function Lib:CreateWindow(cfg)
 
     -- tombol buka / tutup (melayang, bisa digeser)
     local openBtn = mk("TextButton", {
-        AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -8, 0.5, 0), Size = UDim2.fromOffset(0, 36),
+        AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.new(0.5, 0, 0, 10), Size = UDim2.fromOffset(0, 36),
         AutomaticSize = AUTO_X, BackgroundColor3 = K.side, Text = "", AutoButtonColor = false,
         BorderSizePixel = 0, ZIndex = 150,
     }, gui)
-    round(openBtn, 3)
-    _G.__KNP.fx(outline(openBtn, K.accent, 2, 0.1), "Color")
+    round(openBtn, 18)
+    outline(openBtn, K.accent, 1, 0.2)
     pad(openBtn, 8, 0, 16, 0)
     mk("UIListLayout", {
         FillDirection = Enum.FillDirection.Horizontal, Padding = UDim.new(0, 8),
@@ -1486,7 +1417,7 @@ function Lib:CreateWindow(cfg)
     local ob = badge(openBtn, 22, 12)
     ob.LayoutOrder = 1
     local openLabel = text(openBtn, {
-        Size = UDim2.fromOffset(0, 36), AutomaticSize = AUTO_X, Font = FB, TextSize = 15, Text = strOf(cfg.Title),
+        Size = UDim2.fromOffset(0, 36), AutomaticSize = AUTO_X, Font = FB, TextSize = 13, Text = strOf(cfg.Title),
         LayoutOrder = 2,
     })
     Win._openBtn = openBtn
@@ -1551,7 +1482,7 @@ return Lib
 end)()
 -- LOGO: isi dengan ID aset Roblox (contoh "rbxassetid://123456789" atau "123456789") atau link gambar png/jpg.
 -- Kosong = pakai huruf S.
-WindUI.Logo = "https://raw.githubusercontent.com/cyber4058/tes/refs/heads/main/file_00000000fa648211a58242b299bc8914.png"
+WindUI.Logo = "https://raw.githubusercontent.com/Mizoree-ux/Tess/main/file_00000000f794820797aa0933609c9c7c.png"
 
 ---------------------------------------------------------------------
 -- PENGATURAN & DATA
@@ -1565,6 +1496,8 @@ local State = {
     HitsOverride = 0,             -- jumlah pukulan manual (0 = otomatis)
     BreakBackground = true,       -- selalu ikut pecah background (tanpa tombol)
     MultiTarget = 1,              -- jumlah tile dipukul bergantian (1 = biasa)
+    Fast = true,                  -- Break Cepat: jadwal pukulan tanpa drift, tanpa jeda setelah hancur
+    NextHitAt = 0,                -- waktu (os.clock) pukulan berikutnya boleh dikirim
     SelectedId = nil,
     Offsets = {},                 -- tile yang dipilih di Grid
     CalibX = 0,
@@ -1577,6 +1510,7 @@ local State = {
     AutoCollect = true,           -- ambil drop di tile yang dipilih
     CollectAround = false,        -- ambil drop di sekitar karakter (radius) kapan saja
     CollectRadius = 3,            -- jari-jari collect (tile), dipakai mode Remote
+    CollectAuto = true,           -- Otomatis: pakai Remote kalau server menerima, kalau ditolak pindah ke Sentuhan
     CollectMode = "Sentuhan",     -- "Sentuhan" (badan, seperti main manual) / "Remote" (ambil dari jauh, cara lama)
     RemoteReach = 2,              -- jarak maksimal permintaan Remote ke server (tile). Di atas ini = ditolak server
     RemoteChase = true,           -- drop di luar RemoteReach (tapi dalam radius) dijemput dengan berjalan
@@ -1606,7 +1540,7 @@ local Misc = {
     UpHeld = false,   -- tombol ▲ di layar ditahan
     DownHeld = false, -- tombol ▼ di layar ditahan
     CustomName = true,          -- watermark nama (selalu aktif, mati hanya saat script ditutup)
-    NameText = "@K. NEAR",  -- teks watermark
+    NameText = "@SkyP",  -- teks watermark
 }
 
 -- Auto Clear World
@@ -1840,7 +1774,7 @@ function UI.runJobs()
         if job and now >= job.at then
             UI.Jobs[key] = nil
             local ok, err = pcall(job.fn)
-            if not ok then warn("[K. NEAR] UI job " .. tostring(key) .. ": " .. tostring(err)) end
+            if not ok then warn("[SkyP] UI job " .. tostring(key) .. ": " .. tostring(err)) end
         end
     end
 end
@@ -1999,8 +1933,8 @@ end)() end
 
 Config.add("Farm", State, {
     "Mode", "PlaceMs", "BreakMs", "AfterBreakMs", "HitsOverride", "SelectedId", "Offsets",
-    "CalibX", "CalibY", "AntiAfk", "MutePunch", "Visual", "LiteMode", "AutoCollect", "MultiTarget",
-    "CollectAround", "CollectRadius", "CollectMode", "RemoteReach", "RemoteChase",
+    "CalibX", "CalibY", "AntiAfk", "MutePunch", "Visual", "LiteMode", "AutoCollect", "MultiTarget", "Fast",
+    "CollectAround", "CollectRadius", "CollectMode", "RemoteReach", "RemoteChase", "CollectAuto",
     "SeedDrop", "SeedDropAt", "SeedKeep", "AutoRefill", "RefillRadius", "AutoReturn",
 })
 Config.add("Clear", Clear, { "UseBlock", "ScaffoldId", "Collect", "Sweep" })
@@ -2063,6 +1997,7 @@ do (function()
 
     -- jenis: "penjaga" | "stop" | "full" | "bonus" | "rejoin" | "report" | "test"
     function Hook.send(kind, text)
+        if kind == "rejoin" and Hook.onRejoin then pcall(Hook.onRejoin, text) end -- webhook khusus rejoin
         if not Hook.On or not Hook.valid(Hook.Url) then return end
         local allow = kind == "test" or kind == "report"
             or (kind == "penjaga" and Hook.Penjaga) or (kind == "stop" and Hook.Stop)
@@ -2083,7 +2018,7 @@ do (function()
                     Hook.Status = "Executor tidak punya fungsi request"
                 else
                     local body = HttpService:JSONEncode({
-                        username = "K. NEAR",
+                        username = "SkyP",
                         content = ("**[%s]** %s"):format(LocalPlayer.Name, text),
                     })
                     local ok, res = pcall(req, {
@@ -2440,10 +2375,6 @@ local function doInvRefresh(force)
         local labels = inventoryLabels(ids)
         UI.ddRefresh(UI.InvDropdown, labels)
         selectSaved(UI.InvDropdown, labels, State.SelectedId)
-        if UI.V2BlockDD then
-            UI.ddRefresh(UI.V2BlockDD, labels)
-            selectSaved(UI.V2BlockDD, labels, UI.V2 and UI.V2.BlockId)
-        end
     end
     local sids = seedIds()
     local ssig = table.concat(sids, ",")
@@ -2456,10 +2387,6 @@ local function doInvRefresh(force)
         if #labels == 0 then labels = { "(tidak ada seed di inventori)" } end
         UI.ddRefresh(UI.SeedDropdown, labels)
         selectSaved(UI.SeedDropdown, labels, Farmer.SeedId)
-        if UI.V2SeedDD then
-            UI.ddRefresh(UI.V2SeedDD, labels)
-            selectSaved(UI.V2SeedDD, labels, UI.V2 and UI.V2.SeedId)
-        end
         if UI.PabrikSeedDropdown then
             UI.ddRefresh(UI.PabrikSeedDropdown, labels)
             selectSaved(UI.PabrikSeedDropdown, labels, Pabrik.SeedId)
@@ -2589,7 +2516,7 @@ local function sendSetTile(layer, x, y, id)
     if Refs.SetTile then
         local ok, err = pcall(Refs.SetTile, layer, x, y, id, false, false)
         if ok then return true end
-        warn("[K. NEAR] setTile game gagal, pakai remote langsung: " .. tostring(err))
+        warn("[SkyP] setTile game gagal, pakai remote langsung: " .. tostring(err))
     end
     if NetOk and type(Net) == "table" and type(Net.tile) == "table" then
         -- sama seperti game: layer 1 = fg, 2 = bg
@@ -3112,6 +3039,40 @@ function Drops.remoteTick(list, s)
     if far and Drops.chaseFar then task.spawn(Drops.chaseFar, far) end
 end
 
+-- PATCH Collect Otomatis (pintar):
+--   coba Remote dulu (paling cepat). Jarak Remote diukur sendiri dari hasil server (Drops.Probe).
+--   Kalau Remote terus ditolak / fungsi ambil-drop game tidak ada -> pindah Sentuhan, dicoba lagi 90 dtk kemudian.
+task.spawn(function()
+    local lastOk, lastFail = 0, 0
+    while alive() do
+        task.wait(2)
+        if State.CollectAuto then
+            local P = Drops.Probe
+            local canRemote = (Refs.World and type(rawget(Refs.World, "takeDrop")) == "function") or TakeDropRemote ~= nil
+            local dOk, dFail = P.nOk - lastOk, P.nFail - lastFail
+            lastOk, lastFail = P.nOk, P.nFail
+            if not canRemote then
+                State.CollectMode = "Sentuhan"
+            elseif State.CollectMode == "Remote" then
+                if dFail >= 6 and dOk == 0 then
+                    State.CollectMode = "Sentuhan"
+                    Drops.AutoBack = os.clock() + 90
+                    State.LastAction = "Collect: Remote ditolak server, pindah ke Sentuhan"
+                end
+            elseif os.clock() >= (Drops.AutoBack or 0) then
+                State.CollectMode = "Remote"
+            end
+            -- jarak Remote terjauh yang masih diterima server
+            if P.nOk >= 8 and P.okMax then
+                local lim = P.okMax
+                if P.failMin and P.failMin < lim then lim = P.failMin - 0.25 end
+                local r = math.clamp(math.floor(lim), 1, 5)
+                if r ~= State.RemoteReach then State.RemoteReach = r end
+            end
+        end
+    end
+end)
+
 local function collectTick()
     local busy = State.AutoCollect or State.CollectAround or State.Override ~= nil or (Clear.Running and Clear.Collect)
         or (Farmer.Running and Farmer.Collect) or Pabrik.Running or Build.Running or Splice.Roaming or Vend.Running
@@ -3379,6 +3340,10 @@ end
 local function validate()
     local doPlace = farmMode() ~= "Break saja"
     if not Refs.World then return "Data world belum ketemu. Tekan 'Hubungkan ke game'" end
+    if State.Fast and not Refs.Punch then
+        pcall(findRefs) -- cari ulang referensi fungsi pukul (game update bisa mengacak nama)
+        if not Refs.Punch then return "Break Cepat butuh fungsi Pukul. Referensi 'Pukul' belum ketemu: jalankan Diagnosa di tab Observasi" end
+    end
     if next(farmOffsets()) == nil then return "Pilih tile dulu di Grid Tile" end
     if not getPlayerTile() then return "Kamu belum masuk world" end
     if doPlace and not farmBlock() then return "Pilih block dari inventori" end
@@ -3532,14 +3497,25 @@ local function farmLoop(runId)
                 active = nextActive
 
                 if hit then
-                    local gap = State.BreakMs / 1000
+                    local gap = math.max(State.BreakMs, 200) / 1000 -- server hanya terima ~1 pukulan / 0.22 dtk
                     if rayDir then gap = math.max(gap, 0.35) end -- jeda Rayman asli
-                    local rest = gap - (os.clock() - t0)
-                    if rest > 0.005 then task.wait(rest) end
+                    if State.Fast then
+                        -- jadwal absolut: pukulan berikutnya tepat gap setelah pukulan SEBELUMNYA,
+                        -- bukan gap setelah selesai proses (tidak ada drift / waktu terbuang)
+                        local due = (State.NextHitAt > 0 and State.NextHitAt or t0) + gap
+                        local now = os.clock()
+                        if due < now - gap then due = now end -- ketinggalan jauh: jangan menumpuk
+                        State.NextHitAt = due
+                        local rest = due - now
+                        if rest > 0.002 then task.wait(rest) end
+                    else
+                        local rest = gap - (os.clock() - t0)
+                        if rest > 0.005 then task.wait(rest) end
+                    end
                     if not (State.Running and alive()) then break end
                 end
                 -- drop diambil otomatis oleh collector cepat
-                if broke and State.AfterBreakMs > 0 then task.wait(State.AfterBreakMs / 1000) end
+                if broke and not State.Fast and State.AfterBreakMs > 0 then task.wait(State.AfterBreakMs / 1000) end
             end
         end
 
@@ -3578,7 +3554,7 @@ local function setRunningVisual()
     if UI.FarmToggle then pcall(function() UI.FarmToggle:Set(State.Running) end) end
     if UI.GridStart and UI.GridMode == "farm" then
         UI.GridStart.Text = State.Running and "STOP" or "START"
-        UI.GridStart.BackgroundColor3 = State.Running and _G.__KNP.danger or _G.__KNP.accent
+        UI.GridStart.BackgroundColor3 = State.Running and Color3.fromRGB(232, 84, 104) or Color3.fromRGB(47, 125, 255)
     end
 end
 
@@ -3597,6 +3573,7 @@ local stopClear, stopFarmer
 
 local function startFarm()
     if State.Running then return end
+    State.NextHitAt = 0
     local err = validate()
     if err then
         stopFarm(err)
@@ -3623,7 +3600,7 @@ local function startFarm()
     task.spawn(function(id)
         local ok, e = pcall(farmLoop, id)
         if not ok then
-            warn("[K. NEAR] farmLoop: " .. tostring(e))
+            warn("[SkyP] farmLoop: " .. tostring(e))
             stopFarm("Error: " .. tostring(e))
         end
     end, State.RunId)
@@ -3634,7 +3611,7 @@ do
     startFarm = function()
         local ok, e = pcall(raw)
         if not ok then
-            warn("[K. NEAR] startFarm: " .. tostring(e))
+            warn("[SkyP] startFarm: " .. tostring(e))
             State.Running = false
             notify("Auto Farm error", tostring(e), 10)
         end
@@ -4714,7 +4691,7 @@ function Drops.chaseFar(d)
     AutoInput.active = was
     Drops.chasing = false
     if (d.n or 0) > 0 then DropFailUntil[d.uid] = os.clock() + 3 end -- masih ada: jangan dijemput terus-terusan
-    if not ok then warn("[K. NEAR] jemput drop: " .. tostring(err)) end
+    if not ok then warn("[SkyP] jemput drop: " .. tostring(err)) end
 end
 
 -- Tile yang barusan pecah: drop-nya datang dari server (sesuai ping). Tunggu sampai drop baru
@@ -5356,7 +5333,7 @@ local function startClear()
     task.spawn(function()
         local ok, e = pcall(clearLoop)
         if not ok then
-            warn("[K. NEAR] Auto Clear error: " .. tostring(e))
+            warn("[SkyP] Auto Clear error: " .. tostring(e))
             if Clear.Running then stopClear("Error: " .. tostring(e)) end
         end
     end)
@@ -6072,7 +6049,7 @@ local function startFarmer()
     task.spawn(function()
         local ok, e = pcall(farmerLoop)
         if not ok then
-            warn("[K. NEAR] Farmer error: " .. tostring(e))
+            warn("[SkyP] Farmer error: " .. tostring(e))
             if Farmer.Running then stopFarmer("Error: " .. tostring(e)) end
         end
     end)
@@ -6275,7 +6252,7 @@ local function startSpliceRoam()
     task.spawn(function()
         local ok, e = pcall(spliceRoamLoop, id)
         if not ok then
-            warn("[K. NEAR] Splice error: " .. tostring(e))
+            warn("[SkyP] Splice error: " .. tostring(e))
             if Splice.Running and Splice.stop then Splice.stop("Error: " .. tostring(e)) end
         end
     end)
@@ -6585,7 +6562,7 @@ local function pabrikBreak(o)
     end)
     Pabrik.Status = "Break " .. itemName(o.block) .. " di posisi pabrik"
     local ok, e = pcall(farmLoop, id)
-    if not ok then warn("[K. NEAR] Pabrik break error: " .. tostring(e)) end
+    if not ok then warn("[SkyP] Pabrik break error: " .. tostring(e)) end
     State.Running = false
     State.Override = nil
     State.Quiet = false
@@ -6719,574 +6696,6 @@ local function dropTrip(items, live, say)
     return ok, why
 end
 Auto.dropTrip = dropTrip
-
--- =====================================================================
--- PABRIK V2 (K. NEAR)
---   1. Auto collect drop dalam radius tile (otomatis / manual)
---   2. Put & break block tepat di atas kepala (seed & gems terus mengalir)
---   3. Tanam seed di atas blok padat yang kamu tentukan (Grid mode V2)
---   4. Auto drop seed dengan jumlah custom
--- Karakter berdiri diam; semua kerja di dalam jangkauan tangan.
--- =====================================================================
-do (function()
-    local V2 = {
-        Running = false, RunId = 0, Status = "-",
-        Collect = true, CollectR = 3,
-        PB = true, BlockId = nil, PunchMs = 130,
-        Plant = true, Harvest = true, SeedId = nil, PlantMs = 150, Tiles = {},
-        Drop = true, DropAt = 150, DropN = 100, Keep = 0,
-        Placed = 0, Broken = 0, Planted = 0, Harvested = 0, Dropped = 0, Collected = 0,
-        DropBackoff = 0, Skip = {},
-        Auto = false, Home = nil, HomeX = -1, HomeY = -1, HomeFailUntil = 0, AutoPhase = "-", Pending = nil,
-    }
-    UI.V2 = V2
-    Config.add("PabrikV2", V2, {
-        "Collect", "CollectR", "PB", "BlockId", "PunchMs", "Plant", "Harvest", "SeedId",
-        "PlantMs", "Tiles", "Drop", "DropAt", "DropN", "Keep", "Auto", "HomeX", "HomeY",
-    })
-
-    local function say(t) V2.Status = t end
-
-    local function blockId()
-        if V2.BlockId then return V2.BlockId end
-        return V2.SeedId and blockOfSeed(V2.SeedId) or nil
-    end
-
-    -- jarak collect yang benar-benar dipakai (server menolak yang lebih jauh dari RemoteReach)
-    function V2.effR()
-        return math.min(V2.CollectR, (State.RemoteReach or 2) + 0.2)
-    end
-
-    -- pusat collect: di mode Auto Detect ikut posisi break (Home), selain itu posisi karakter
-    function V2.center()
-        local h = V2.Auto and V2.Home
-        if h then return h.x + 0.5, h.y + 0.5 end
-        local s = playerState()
-        if not s then return nil end
-        return s.x, s.y - 0.475
-    end
-
-    local function countTiles()
-        local n = 0
-        for _ in pairs(V2.Tiles) do n += 1 end
-        return n
-    end
-
-    -- ---------- 1. COLLECT ----------
-    local function collectSweep()
-        local list = Drops.list
-        if not list then return 0 end
-        local cx, cy = V2.center()
-        if not cx then return 0 end
-        local R = V2.effR()
-        local snap = table.move(list, 1, #list, 1, {})
-        local n = 0
-        for _, d in ipairs(snap) do
-            if type(d) == "table" and type(d.x) == "number" and type(d.y) == "number"
-                and math.abs(d.x - cx) <= R and math.abs(d.y - cy) <= R
-                and not d.taking and (d.n or 0) > 0 then
-                n += 1
-                local amount = d.n
-                task.spawn(function()
-                    local ok, got = pcall(takeDrop, d)
-                    if ok and got then V2.Collected += amount end
-                end)
-            end
-        end
-        return n
-    end
-
-    -- manual: sekali sapu
-    function V2.collectNow()
-        if not Drops.list then pcall(findDropRefs) end
-        if not Drops.list then
-            notify("Pabrik V2", "Daftar drop belum ketemu. Tekan 'Hubungkan ke game'", 4)
-            return 0
-        end
-        local n = collectSweep()
-        notify("Pabrik V2", (n > 0) and (n .. " drop diambil (radius " .. V2.effR() .. " tile)")
-            or ("Tidak ada drop dalam radius " .. V2.effR() .. " tile"), 3)
-        return n
-    end
-
-    -- otomatis: sapu terus selama toggle Auto collect nyala (tidak perlu Pabrik V2 jalan)
-    do
-        local nextC, nextRef = 0, 0
-        table.insert(Connections, RunService.Heartbeat:Connect(function()
-            if not alive() or not V2.Collect then return end
-            if V2.Running and V2.Auto then return end -- Auto Detect: collect animasi (sentuhan badan)
-            local now = os.clock()
-            if now < nextC then return end
-            nextC = now + 0.12
-            if not Drops.list then
-                if now >= nextRef then
-                    nextRef = now + 5
-                    pcall(findDropRefs)
-                end
-                return
-            end
-            pcall(collectSweep)
-        end))
-    end
-
-    -- ---------- 2. PUT & BREAK DI ATAS KEPALA ----------
-    -- put & break di tile (x, y). Dipakai mode biasa (atas kepala) dan Auto Detect (kiri/kanan)
-    local function putBreakAt(run, x, y, label)
-        local id = blockId()
-        if not id then say("Pilih block untuk put & break (atau pilih seed)") return false end
-        label = label or "di atas kepala"
-        -- MAKSIMAL 1 BLOK: kalau masih ada block sisa yang belum pecah, pecahkan itu dulu (jangan put baru)
-        local pend = V2.Pending
-        if pend then
-            if pend.id == id and tileAt(pend.layer, pend.x, pend.y) == pend.id then
-                x, y = pend.x, pend.y
-            else
-                V2.Pending = nil
-            end
-        end
-        local fg = tileAt("fg", x, y)
-        if fg == nil then say("Tile " .. label .. " di luar world") return false end
-        local it = ItemDB[id]
-        local layer = (it and it.background) and "bg" or "fg"
-        local cur = tileAt(layer, x, y)
-        if cur == nil then return false end
-        if not canWorkAt(x, y) then say("Tidak boleh build " .. label .. " (lock / area)") return false end
-
-        if cur == 0 and (layer == "bg" or fg == 0) then
-            if invCount(id) <= 0 then say("Block " .. itemName(id) .. " habis") return false end
-            sendSetTile(layer, x, y, id)
-            if Refs.Inv then pcall(function() Refs.Inv:remove(id, 1) end) end
-            local key = x .. "," .. y
-            HitCount[key] = nil
-            PlacedAt[key] = os.clock()
-            State.Placed += 1
-            V2.Placed += 1
-        elseif cur ~= id then
-            say("Tile " .. label .. " tidak kosong (" .. itemName(cur) .. ")")
-            return false
-        end
-
-        V2.Pending = { x = x, y = y, id = id, layer = layer } -- block ini wajib pecah dulu sebelum put lagi
-        local tries, nilN = 0, 0
-        while run() and tries < 80 do
-            local r = tryBreak(x, y, layer == "bg")
-            if r == "broke" then
-                V2.Pending = nil
-                V2.Broken += 1
-                say("Put & break " .. itemName(id) .. " (" .. x .. "," .. y .. ")")
-                return true
-            end
-            if r == nil then
-                nilN += 1 -- data tile kadang telat update setelah put: coba lagi sebentar
-                if tileAt(layer, x, y) ~= id and nilN >= 6 then
-                    V2.Pending = nil
-                    say("Block " .. label .. " tidak bisa dipecah")
-                    return false
-                end
-                if nilN >= 20 then say("Block " .. label .. " tidak bisa dipecah") return false end
-            end
-            tries += 1
-            task.wait(math.max(V2.PunchMs, 30) / 1000)
-        end
-        return false
-    end
-
-    local function putBreakOnce(run)
-        local px, py = getPlayerTile()
-        if not px then say("Kamu belum masuk world") return false end
-        return putBreakAt(run, px, py - 1, "di atas kepala") -- tile tepat di atas kepala
-    end
-
-    -- ---------- 3. TANAM / PANEN DI ATAS BLOK PADAT ----------
-    local function plantSpots(anchor)
-        local ax, ay = getPlayerTile()
-        if anchor then ax, ay = anchor.x, anchor.y end
-        if not ax then return {} end
-        local out = {}
-        for key in pairs(V2.Tiles) do
-            local dx, dy = string.match(key, "^(-?%d+),(-?%d+)$")
-            if dx then
-                local bx, by = ax + tonumber(dx), ay + tonumber(dy)
-                local x, y = bx, by - 1 -- seed ditanam di atas blok padat
-                local clash = (x == ax and y == ay - 1) or (x == ax and y == ay) -- tile put&break & badan
-                if anchor and y == ay and (x == ax - 1 or x == ax + 1) then clash = true end -- tile PNB kiri/kanan
-                if not clash then
-                    out[#out + 1] = { x = x, y = y }
-                end
-            end
-        end
-        table.sort(out, function(a, b)
-            if a.x ~= b.x then return a.x < b.x end
-            return a.y < b.y
-        end)
-        return out
-    end
-
-    local function plantHarvestOnce(run)
-        local seed = V2.SeedId
-        if not seed then say("Pilih seed untuk ditanam") return 0 end
-        local spots = plantSpots()
-        if #spots == 0 then say("Belum ada blok padat ditentukan (Grid mode V2)") return 0 end
-        local R = farmReach() - 0.08
-        local did = 0
-        for _, t in ipairs(spots) do
-            if not run() then return did end
-            local s = playerState()
-            if not s then return did end
-            local key = t.x .. "," .. t.y
-            if stateReaches(s, t.x, t.y, R) and canWorkAt(t.x, t.y) and not (V2.Skip[key] and os.clock() < V2.Skip[key]) then
-                local id = fgIdAt(t.x, t.y)
-                if id ~= 0 then
-                    if V2.Harvest then
-                        local ra = treeReadyAt(t.x, t.y, id) -- nil = bukan pohon / data pohon belum ketemu
-                        if ra and workspace:GetServerTimeNow() >= ra then
-                            local r = tryBreak(t.x, t.y, false)
-                            if r == "broke" then
-                                V2.Harvested += 1
-                                did += 1
-                                say("Panen " .. itemName(id) .. " (" .. t.x .. "," .. t.y .. ")")
-                                task.wait(math.max(V2.PlantMs, 30) / 1000)
-                            else
-                                V2.Skip[key] = os.clock() + 20
-                            end
-                        end
-                    end
-                elseif V2.Plant and invCount(seed) > 0 and plantSpotOk(t.x, t.y, seed) then
-                    sendSetTile("fg", t.x, t.y, seed)
-                    if Refs.Inv then pcall(function() Refs.Inv:remove(seed, 1) end) end
-                    V2.Planted += 1
-                    did += 1
-                    say("Tanam " .. itemName(seed) .. " (" .. t.x .. "," .. t.y .. ")")
-                    task.wait(math.max(V2.PlantMs, 30) / 1000)
-                end
-            end
-        end
-        return did
-    end
-
-    -- ---------- 4. DROP SEED (jumlah custom) ----------
-    local function dropStep(run)
-        if not (V2.Drop and V2.SeedId) then return end
-        if os.clock() < V2.DropBackoff then return end
-        local have = invCount(V2.SeedId)
-        if have < V2.DropAt then return end
-        local n = math.min(V2.DropN, have - V2.Keep)
-        if n <= 0 then return end
-        say(("Drop %s x%d"):format(itemName(V2.SeedId), n))
-        local got, err = dropItems(V2.SeedId, n, run)
-        V2.Dropped += got or 0
-        if err then
-            say("Drop gagal: " .. tostring(err))
-            V2.DropBackoff = os.clock() + 15
-        end
-    end
-
-    -- ---------- 5. AUTO DETECT (PNB kiri-kanan + panen/tanam per pohon) ----------
-    --   x∆x : karakter di tengah, block di-put & di-break di KIRI dan KANAN (bukan di atas kepala)
-    --   Ada drop (seed / block / gems) -> diambil dulu, baru lanjut PNB
-    --   Block habis -> deteksi pohon siap panen: panen 1 pohon, langsung tanam lagi di pohon itu, lanjut pohon berikut
-    --   Semua pohon beres -> balik ke posisi awal, lanjut PNB
-    -- Drop yang masih menunggu diambil di sekitar posisi break (yang sudah masuk inventory = hilang dari daftar)
-    local PEND_R = 3.5
-    local function pendingDrops()
-        local list = Drops.list
-        if not list then return 0 end
-        local cx, cy = V2.center()
-        if not cx then return 0 end
-        local n = 0
-        for _, d in ipairs(list) do
-            if type(d) == "table" and type(d.x) == "number" and type(d.y) == "number"
-                and math.abs(d.x - cx) <= PEND_R and math.abs(d.y - cy) <= PEND_R
-                and (d.n or 0) > 0 and not d.taking and (d.armed ~= false or d.id == 112) then
-                local room = true
-                if d.id ~= 112 and Refs.Inv then -- inventori penuh: tidak akan terambil, jangan ditunggu
-                    local okr, r = pcall(function() return Refs.Inv:room(d.id) end)
-                    if okr and type(r) == "number" and r <= 0 then room = false end
-                end
-                if room then n += 1 end
-            end
-        end
-        return n
-    end
-
-    -- Collect dengan animasi game: badan menyentuh drop (drop terbang ke karakter), lalu balik ke posisi.
-    -- Sisa yang tidak tersentuh diambil lewat remote (dalam jangkauan).
-    local function animCollect(run)
-        local list = Drops.list
-        if not list then return end
-        local px, py = getPlayerTile()
-        local s = playerState()
-        if not (px and s) then return end
-        local tiles, seen = {}, {}
-        for _, d in ipairs(list) do
-            if type(d) == "table" and type(d.x) == "number" and type(d.y) == "number"
-                and (d.n or 0) > 0 and not d.taking and (d.armed ~= false or d.id == 112) then
-                local tx, ty = math.floor(d.x), math.floor(d.y)
-                local k = tx .. "," .. ty
-                if not seen[k] and (ty == py or ty == py - 1) and math.abs(tx - px) <= 3 then
-                    seen[k] = true
-                    tiles[#tiles + 1] = { x = tx, y = ty }
-                end
-            end
-        end
-        if #tiles > 0 and s.grounded and Drops.touchAll and run() then
-            local ok, e = pcall(Drops.touchAll, tiles, px, py)
-            if not ok then warn("[K. NEAR] Pabrik V2 collect: " .. tostring(e)) end
-        end
-        if run() and pendingDrops() > 0 then
-            pcall(collectSweep) -- cadangan: drop yang tidak tersentuh
-            task.wait(0.12)
-        end
-    end
-
-    -- Tunggu berdasarkan DETEKSI (bukan timer tetap):
-    --   1) tunggu drop hasil break muncul (sesuai ping)  2) ambil sampai tidak ada drop tersisa
-    --   (= semua sudah masuk inventory)  3) berhenti kalau tidak ada kemajuan
-    local function collectWait(run, tile)
-        if not Drops.list then pcall(findDropRefs) end
-        if not Drops.list then return end
-        if tile then pcall(Drops.waitSpawn, { tile }) end
-        local last, stall = nil, 0
-        local t0 = os.clock()
-        while run() and os.clock() - t0 < 12 do
-            local n = pendingDrops()
-            if n <= 0 then break end -- semua sudah terambil -> lanjut
-            if last and n >= last then stall += 1 else stall = 0 end
-            if stall >= 3 then say("Drop tidak bisa diambil, lanjut") break end
-            last = n
-            say(("Ambil drop (%d)..."):format(n))
-            animCollect(run)
-            task.wait(0.08)
-        end
-    end
-
-    local function goHome(run)
-        local h = V2.Home
-        if not h or not run() then return true end
-        local px, py = getPlayerTile()
-        if not px then return false end
-        if px == h.x and py == h.y then return true end
-        if os.clock() < (V2.HomeFailUntil or 0) then return false end
-        say(("Balik ke posisi awal (%d,%d)"):format(h.x, h.y))
-        if walkTo(h.x, h.y, 45) then return true end
-        V2.HomeFailUntil = os.clock() + 20
-        say("Gagal balik ke posisi awal, dicoba lagi nanti")
-        return false
-    end
-
-    -- posisi break. persist=true -> disimpan sebagai posisi custom (dipakai terus tiap START)
-    function V2.setHome(persist, cx, cy)
-        local x, y = cx, cy
-        if not x then x, y = getPlayerTile() end
-        if not x then return false end
-        V2.Home = { x = x, y = y, world = Guard.worldName() }
-        if persist then V2.HomeX, V2.HomeY = x, y end
-        return true
-    end
-
-    function V2.clearHome()
-        V2.Home, V2.HomeX, V2.HomeY = nil, -1, -1
-    end
-
-    -- dipanggil saat START / Auto Detect dinyalakan
-    function V2.initHome()
-        if V2.HomeX >= 0 and V2.HomeY >= 0 then
-            V2.Home = { x = V2.HomeX, y = V2.HomeY, world = Guard.worldName() } -- custom
-        elseif not (V2.Home and V2.Home.world == Guard.worldName()) then
-            V2.setHome(false)
-        end
-        return V2.Home ~= nil
-    end
-
-    -- PNB sisi kiri & kanan, SATU blok per waktu: put -> break -> ambil drop -> baru sisi berikutnya.
-    -- Kalau block gagal pecah, tidak ada put baru (block sisa dipecah dulu di putaran berikutnya).
-    local function sidePNB(run)
-        local id = blockId()
-        if not id then say("Pilih block untuk put & break (atau pilih seed)") return 0 end
-        local did = 0
-        for _, dx in ipairs({ -1, 1 }) do
-            if not run() or invCount(id) <= 0 then break end
-            local px, py = getPlayerTile()
-            if not px then break end
-            local tx, ty = px + dx, py
-            if putBreakAt(run, tx, ty, dx < 0 and "di kiri" or "di kanan") then
-                did += 1
-                collectWait(run, { x = tx, y = ty })
-            elseif V2.Pending then
-                break -- masih ada block belum pecah: jangan put di sisi lain
-            end
-        end
-        return did
-    end
-
-    -- Panen & tanam per pohon. Hanya spot yang terjangkau dari posisi awal.
-    local function autoHarvestPlant(run)
-        local spots = plantSpots(V2.Home)
-        if #spots == 0 then say("Belum ada blok padat ditentukan (Grid mode V2)") return 0 end
-        local seed = V2.SeedId
-        local R = farmReach() - 0.08
-        local did = 0
-        for _, t in ipairs(spots) do
-            if not run() then return did end
-            local s = playerState()
-            if not s then return did end
-            local key = t.x .. "," .. t.y
-            if stateReaches(s, t.x, t.y, R) and canWorkAt(t.x, t.y) and not (V2.Skip[key] and os.clock() < V2.Skip[key]) then
-                local id = fgIdAt(t.x, t.y)
-                local free = (id == 0)
-                if id ~= 0 and V2.Harvest then
-                    local ra = treeReadyAt(t.x, t.y, id)
-                    if ra and workspace:GetServerTimeNow() >= ra then
-                        say("Pohon siap: " .. itemName(id) .. " (" .. t.x .. "," .. t.y .. ")")
-                        local r, hits = tryBreak(t.x, t.y, false), 0
-                        while r == "hit" and hits < 8 and run() do
-                            hits += 1
-                            task.wait(math.max(V2.PunchMs, 30) / 1000)
-                            r = tryBreak(t.x, t.y, false)
-                        end
-                        if r == "broke" then
-                            V2.Harvested += 1
-                            did += 1
-                            say("Panen " .. itemName(id) .. " (" .. t.x .. "," .. t.y .. ")")
-                            collectWait(run) -- ambil seed / block / gems hasil panen
-                            free = true
-                        else
-                            V2.Skip[key] = os.clock() + 20
-                        end
-                    end
-                end
-                -- tanam langsung di pohon yang barusan dipanen (atau spot kosong)
-                if free and V2.Plant and seed and invCount(seed) > 0 and run()
-                    and fgIdAt(t.x, t.y) == 0 and plantSpotOk(t.x, t.y, seed) then
-                    sendSetTile("fg", t.x, t.y, seed)
-                    if Refs.Inv then pcall(function() Refs.Inv:remove(seed, 1) end) end
-                    V2.Planted += 1
-                    did += 1
-                    say("Tanam " .. itemName(seed) .. " (" .. t.x .. "," .. t.y .. ")")
-                    task.wait(math.max(V2.PlantMs, 30) / 1000)
-                end
-            end
-        end
-        return did
-    end
-
-    local function autoLoop(run)
-        say("Auto Detect berjalan")
-        while run() do
-            local acted = 0
-            if not V2.Home then V2.initHome() end
-            if goHome(run) and run() then
-                collectWait(run) -- drop yang ada diambil dulu sebelum apa pun
-                local id = blockId()
-                if V2.PB and id and invCount(id) > 0 then
-                    V2.AutoPhase = "PNB kiri-kanan"
-                    acted += sidePNB(run)
-                end
-                -- block habis (atau PNB tidak bisa jalan): deteksi pohon siap panen
-                if run() and acted == 0 and (V2.Plant or V2.Harvest) then
-                    V2.AutoPhase = "Detect panen & tanam"
-                    acted += autoHarvestPlant(run)
-                    if acted == 0 and run() then say("Tidak ada pohon siap, menunggu...") end
-                end
-            end
-            if not run() then break end
-            dropStep(run)
-            task.wait(acted > 0 and 0.03 or 0.4)
-        end
-    end
-
-    -- ---------- LOOP UTAMA ----------
-    local function syncUi()
-        if UI.V2Toggle then pcall(function() UI.V2Toggle:Set(V2.Running) end) end
-        if UI.GridMode == "v2" and UI.setGridMode then pcall(UI.setGridMode, "v2") end
-    end
-
-    local function loop(id)
-        local function run() return V2.Running and V2.RunId == id and alive() end
-        if V2.Auto then return autoLoop(run) end
-        say("Berjalan")
-        while run() do
-            local acted = 0
-            if V2.PB and putBreakOnce(run) then acted += 1 end
-            if not run() then break end
-            if V2.Plant or V2.Harvest then acted += plantHarvestOnce(run) end
-            if not run() then break end
-            dropStep(run)
-            task.wait(acted > 0 and 0.03 or 0.4)
-        end
-    end
-
-    function V2.start()
-        if V2.Running then return true end
-        if not Refs.World then
-            notify("Pabrik V2", "Data world belum ketemu. Tekan 'Hubungkan ke game'", 4)
-            return false
-        end
-        if not playerState() then
-            notify("Pabrik V2", "Kamu belum masuk world", 3)
-            return false
-        end
-        if not (V2.PB or V2.Plant or V2.Harvest or V2.Drop) then
-            notify("Pabrik V2", "Aktifkan minimal satu fungsi dulu", 3)
-            return false
-        end
-        if Pabrik.Running and Pabrik.stop then Pabrik.stop("Dihentikan karena Pabrik V2 dimulai") end
-        if State.Running then pcall(stopFarm) end
-        if V2.Auto then V2.initHome() end
-        V2.RunId += 1
-        V2.Running = true
-        V2.Skip = {}
-        local id = V2.RunId
-        syncUi()
-        task.spawn(function()
-            local ok, e = pcall(loop, id)
-            if not ok then
-                warn("[K. NEAR] Pabrik V2 error: " .. tostring(e))
-                say("Error: " .. tostring(e))
-            end
-            if V2.RunId == id then
-                V2.Running = false
-                syncUi()
-            end
-        end)
-        return true
-    end
-
-    function V2.stop(reason)
-        V2.Running = false
-        V2.RunId += 1
-        say(reason or "Berhenti")
-        syncUi()
-    end
-
-    function V2.resetStats()
-        V2.Placed, V2.Broken, V2.Planted, V2.Harvested, V2.Dropped, V2.Collected = 0, 0, 0, 0, 0, 0
-    end
-
-    function V2.markBelowFeet()
-        local x, y = getPlayerTile()
-        if not x then return false end
-        V2.Tiles["0,1"] = true -- blok tepat di bawah kaki (relatif ke posisi berdiri)
-        return true
-    end
-
-    function V2.statusText()
-        local px, py = getPlayerTile()
-        local bid, sid = blockId(), V2.SeedId
-        local lines = {
-            "Status  : " .. (V2.Running and "BERJALAN" or "berhenti") .. " - " .. tostring(V2.Status),
-            "Posisi  : " .. (px and ("(" .. px .. "," .. py .. ")  kepala (" .. px .. "," .. (py - 1) .. ")") or "-"),
-            "Block   : " .. (bid and (itemName(bid) .. " x" .. invCount(bid)) or "belum dipilih"),
-            "Seed    : " .. (sid and (itemName(sid) .. " x" .. invCount(sid)) or "belum dipilih"),
-            "Blok padat ditentukan: " .. countTiles(),
-            "Auto Detect: " .. (V2.Auto and ("ON - " .. tostring(V2.AutoPhase)) or "off")
-                .. (V2.Home and ("  | posisi awal (" .. V2.Home.x .. "," .. V2.Home.y .. ")") or ""),
-            ("Put %d | Break %d | Tanam %d | Panen %d"):format(V2.Placed, V2.Broken, V2.Planted, V2.Harvested),
-            ("Collect %d (%s, radius %.1f tile) | Drop %d"):format(V2.Collected, V2.Collect and "ON" or "off", V2.effR(), V2.Dropped),
-        }
-        return table.concat(lines, "\n")
-    end
-end)() end
 
 -- Titik drop sudah diatur? (posisi, WORLD:ID, atau world lain)
 function Pabrik.pointSet()
@@ -7535,7 +6944,7 @@ function Pabrik.start()
     task.spawn(function()
         local ok, e = pcall(pabrikLoop, id)
         if not ok then
-            warn("[K. NEAR] Pabrik error: " .. tostring(e))
+            warn("[SkyP] Pabrik error: " .. tostring(e))
             if Pabrik.Running then Pabrik.stop("Error: " .. tostring(e)) end
         end
     end)
@@ -8227,7 +7636,7 @@ function Vend.start()
     task.spawn(function()
         local ok, e = pcall(vendLoop, id)
         if not ok then
-            warn("[K. NEAR] Vending error: " .. tostring(e))
+            warn("[SkyP] Vending error: " .. tostring(e))
             if Vend.Running then Vend.stop("Error: " .. tostring(e)) end
         end
     end)
@@ -8812,7 +8221,7 @@ function Build.breakSession(o)
     end)
     Build.Status = ("Break %s di posisi break lahan (%d,%d)"):format(itemName(o.block), Build.BreakX, Build.BreakY)
     local ok, e = pcall(farmLoop, id)
-    if not ok then warn("[K. NEAR] Break lahan error: " .. tostring(e)) end
+    if not ok then warn("[SkyP] Break lahan error: " .. tostring(e)) end
     State.Running = false
     State.Override = nil
     State.Quiet = false
@@ -9187,7 +8596,7 @@ function Build.start()
     task.spawn(function()
         local ok, e = pcall(buildLoop, id)
         if not ok then
-            warn("[K. NEAR] Bangun Lahan error: " .. tostring(e))
+            warn("[SkyP] Bangun Lahan error: " .. tostring(e))
             if Build.Running then Build.stop("Error: " .. tostring(e)) end
         end
     end)
@@ -9236,7 +8645,7 @@ function Auto.refillBlock(id, live)
     for _ = 1, 6 do
         if not live() or not roomLeft() then break end
         local okF, n = pcall(Move.fetchDrops, live, R, function(d) return d.id == id end, 25)
-        if not okF then warn("[K. NEAR] refill: " .. tostring(n)) break end
+        if not okF then warn("[SkyP] refill: " .. tostring(n)) break end
         if (n or 0) == 0 then break end -- tidak ada lagi block itu di sekitar
         waitInv(before, math.clamp(0.5 + 4 * ping, 0.8, 3))
         before = math.max(before, invCount(id))
@@ -9478,6 +8887,99 @@ local NAME_COLORS = ColorSequence.new({
 })
 local NAME_FONT = Enum.Font.FredokaOne
 
+-- Cari huruf-gambar nama di dalam tag (nama anak bisa berubah saat game update)
+function NameFx.findBitmap(holder)
+    local b = holder:FindFirstChild("BitmapText")
+    if b then return b end
+    for _, c in ipairs(holder:GetChildren()) do
+        if c.Name ~= "FianName" and string.find(string.lower(c.Name), "bitmap", 1, true) then return c end
+    end
+    return nil
+end
+
+-- Tag pemain asli punya ikon bendera / Wrench dan ukuran wajar. Drop & item lain juga
+-- punya BitmapText (angka jumlah) tapi tidak punya bendera, jadi tidak ikut terpilih.
+function NameFx.looksLikeTag(o)
+    local sz = o.AbsoluteSize
+    if sz.Y < 12 or sz.Y > 90 or sz.X < 20 then return false end
+    if o:FindFirstChild("Wrench") then return true end
+    for _, d in ipairs(o:GetDescendants()) do
+        if NameFx.flagIsCand and NameFx.flagIsCand(d) then return true end
+    end
+    local par = o.Parent
+    if par then
+        for _, d in ipairs(par:GetChildren()) do
+            if d ~= o and NameFx.flagIsCand and NameFx.flagIsCand(d) then return true end
+        end
+    end
+    return false
+end
+
+-- Hitung huruf-gambar (ImageLabel) di dalam teks bitmap
+function NameFx.letters(holder)
+    local bm = NameFx.findBitmap(holder)
+    if not bm then return 0 end
+    local n = 0
+    for _, c in ipairs(bm:GetChildren()) do
+        if c:IsA("ImageLabel") then n += 1 end
+    end
+    return n
+end
+
+-- Semua kandidat tag di SELURUH PlayerGui (nama GameGui bisa diacak game update).
+-- Tingkat A: punya bendera/Wrench. Tingkat B: >= 2 huruf, di bagian atas layar
+-- (hotbar & angka jumlah item ada di bawah). Dalam satu tingkat: paling dekat tengah layar.
+function NameFx.tagCandidates()
+    local cam = workspace.CurrentCamera
+    local vp = cam and cam.ViewportSize or Vector2.new(1280, 720)
+    local midX = vp.X / 2
+    local uid, uname = tostring(LocalPlayer.UserId), string.lower(LocalPlayer.Name)
+    local chat = PlayerGui:FindFirstChild("ChatGui")
+    local out = {}
+    for _, o in ipairs(PlayerGui:GetDescendants()) do
+        if o:IsA("GuiObject") and o.Name ~= "FianName" and NameFx.findBitmap(o)
+            and not (chat and o:IsDescendantOf(chat)) then
+            local sz = o.AbsoluteSize
+            if o:FindFirstChild("FianName") then
+                out[#out + 1] = { o = o, tier = -1, dx = 0 } -- tag yang sudah berisi nama kita
+            elseif sz.Y >= 12 and sz.Y <= 90 and sz.X >= 20 and o.Visible then
+                local dx = math.abs(o.AbsolutePosition.X + sz.X / 2 - midX)
+                local nm = string.lower(o:GetFullName())
+                local tier
+                if string.find(nm, uid, 1, true) or string.find(nm, uname, 1, true) then
+                    tier = 0
+                elseif NameFx.looksLikeTag(o) then
+                    tier = 1
+                elseif NameFx.letters(o) >= 2 and o.AbsolutePosition.Y < vp.Y * 0.7 then
+                    tier = 2
+                end
+                if tier then out[#out + 1] = { o = o, tier = tier, dx = dx } end
+            end
+        end
+    end
+    table.sort(out, function(x, y)
+        if x.tier ~= y.tier then return x.tier < y.tier end
+        return x.dx < y.dx
+    end)
+    return out
+end
+
+-- Cari nametag milik sendiri (dicari ulang tiap 0.5 detik)
+function NameFx.findOwnTag()
+    local now = os.clock()
+    local c = NameFx.tagCache
+    if now - (NameFx.tagScanAt or 0) < 0.5 then
+        return (c and c.Parent) and c or nil
+    end
+    NameFx.tagScanAt = now
+    -- PATCH: tag yang sudah dipakai jangan dicari ulang selama masih ada
+    -- (bitmap aslinya kita sembunyikan, jadi scan ulang sering gagal mengenalinya -> nama hilang)
+    if c and c.Parent and c:IsDescendantOf(PlayerGui) then return c end
+    local list = NameFx.tagCandidates()
+    NameFx.tagCache = list[1] and list[1].o or nil
+    return NameFx.tagCache
+end
+
 -- Tempat nama: di atas karakter & panel kiri atas
 local function nameHolders()
     local gg = PlayerGui:FindFirstChild("GameGui")
@@ -9486,7 +8988,9 @@ local function nameHolders()
     local chat = PlayerGui:FindFirstChild("ChatGui")
     local hud = chat and chat:FindFirstChild("HUD")
     local panel = hud and hud:FindFirstChild("PlayerPanel")
-    return cam and cam:FindFirstChild("NameTag"), panel and panel:FindFirstChild("Name")
+    local tag = cam and cam:FindFirstChild("NameTag")
+    if not (tag and tag.Parent) then tag = NameFx.findOwnTag() end -- game update: nametag pindah tempat
+    return tag, panel and panel:FindFirstChild("Name")
 end
 
 local function textWidth(text, size)
@@ -9523,7 +9027,7 @@ local function makeLabel(holder, size, isTag)
     local sc = Instance.new("UIScale")
     sc.Parent = lb
     lb.Parent = holder
-    return { holder = holder, bitmap = holder:FindFirstChild("BitmapText"), label = lb, gr = gr, sc = sc,
+    return { holder = holder, bitmap = NameFx.findBitmap(holder), label = lb, gr = gr, sc = sc,
         size = size, isTag = isTag, text = nil, w = 0 }
 end
 
@@ -9555,15 +9059,17 @@ local function nameKeep(e, holder, size, isTag)
         dropEntry(e)
         return nil
     end
-    if not e or e.holder ~= holder or not e.label.Parent then
+    if not e or e.holder ~= holder or not e.label.Parent or e.label.Parent ~= holder then
         dropEntry(e)
         e = makeLabel(holder, size, isTag)
     end
+    if not e.label.Visible then e.label.Visible = true end -- game kadang menyembunyikan isi tag
     if e.text ~= Misc.NameText then
         e.text = Misc.NameText
         e.label.Text = Misc.NameText
         e.w = textWidth(Misc.NameText, size)
     end
+    if not (e.bitmap and e.bitmap.Parent) then e.bitmap = NameFx.findBitmap(holder) end
     if e.bitmap and e.bitmap.Visible then e.bitmap.Visible = false end
     if isTag then
         local h = math.max(holder.Size.Y.Offset, size + 6)
@@ -9689,10 +9195,39 @@ function Misc.DumpNameTag()
             end
         end
     end
-    _add(_t, "NameTag")
+    _add(_t, "NameTag (dipakai)")
     _add(_p3, "PlayerPanel.Name")
+    local _own = NameFx.findOwnTag()
+    _out[#_out + 1] = "Hasil scan tag sendiri: " .. (_own and _own:GetFullName() or "(tidak ketemu)")
+    _out[#_out + 1] = "Versi patch nametag: v4 (scan seluruh PlayerGui)"
+    -- daftar mentah: semua teks bitmap di PlayerGui tanpa filter (untuk diagnosa)
+    local _raw = 0
+    pcall(function()
+        for _, _o in ipairs(PlayerGui:GetDescendants()) do
+            if _o.Name == "BitmapText" and _raw < 15 then
+                _raw += 1
+                local _h = _o.Parent
+                _out[#_out + 1] = ("  [mentah %d] %s | induk %s %dx%d @%d,%d vis=%s"):format(_raw, _o:GetFullName(),
+                    _h and _h.ClassName or "?", _h and _h.AbsoluteSize.X or 0, _h and _h.AbsoluteSize.Y or 0,
+                    _h and _h.AbsolutePosition.X or 0, _h and _h.AbsolutePosition.Y or 0, tostring(_h and _h.Visible))
+            end
+        end
+    end)
+    local _okc, _cands = pcall(NameFx.tagCandidates)
+    if not _okc then _out[#_out + 1] = "tagCandidates ERROR: " .. tostring(_cands) end
+    if _okc then
+        _out[#_out + 1] = "Kandidat (" .. #_cands .. "):"
+        for _i, _c in ipairs(_cands) do
+            if _i > 8 then break end
+            local _kids = {}
+            for _, _k in ipairs(_c.o:GetChildren()) do _kids[#_kids + 1] = _k.ClassName .. ":" .. _k.Name end
+            _out[#_out + 1] = ("  [%d] tier %d dx %d huruf %d pos %d,%d  %s"):format(_i, _c.tier, _c.dx,
+                NameFx.letters(_c.o), _c.o.AbsolutePosition.X, _c.o.AbsolutePosition.Y, _c.o:GetFullName())
+            _out[#_out + 1] = "      anak: " .. table.concat(_kids, ", ")
+        end
+    end
     local _txt = table.concat(_out, "\n")
-    warn("[K. NEAR] struktur nametag:\n" .. _txt)
+    warn("[SkyP] struktur nametag:\n" .. _txt)
     pcall(function()
         if setclipboard then
             setclipboard(_txt)
@@ -9709,16 +9244,14 @@ function NameFx.flagRestore()
 end
 
 -- Animasi tiap frame: gradient mengalir + denyut halus
-table.insert(Connections, RunService.RenderStepped:Connect(function()
-    if not alive() or not Misc.CustomName then return end
+function NameFx.step()
+    if next(NameFx.swapped) ~= nil or next(NameFx.hidden) ~= nil then pcall(NameFx.flagRestore) end
     local tag, panelName = nameHolders()
+    -- holder sesaat tidak ketemu: pakai yang lama selama masih ada (jangan dilepas)
+    if not tag and NameFx.tag and NameFx.tag.holder and NameFx.tag.holder.Parent then tag = NameFx.tag.holder end
+    if not panelName and NameFx.panel and NameFx.panel.holder and NameFx.panel.holder.Parent then panelName = NameFx.panel.holder end
     NameFx.tag = nameKeep(NameFx.tag, tag, 22, true)
     NameFx.panel = nameKeep(NameFx.panel, panelName, 21, false)
-    if os.clock() - NameFx.flagAt > 0.5 then
-        NameFx.flagAt = os.clock()
-        NameFx.flagApply(tag)
-        NameFx.flagApply(panelName)
-    end
     local t = os.clock() - NameFx.t0
     local offset = Vector2.new(((t * 0.45) % 2) - 1, 0)
     local pulse = 1 + 0.045 * math.sin(t * 3.2)
@@ -9730,6 +9263,26 @@ table.insert(Connections, RunService.RenderStepped:Connect(function()
     if pn then
         pn.gr.Offset = offset
         pn.sc.Scale = pulse
+    end
+end
+
+-- Satu error nametag tidak boleh mematikan yang lain: dibungkus pcall, pesan ditampilkan sekali,
+-- tag atas dilepas (nama asli kembali) lalu dicoba lagi 2 detik kemudian.
+table.insert(Connections, RunService.RenderStepped:Connect(function()
+    if not alive() or not Misc.CustomName then return end
+    if os.clock() < (NameFx.retryAt or 0) then return end
+    local ok, err = pcall(NameFx.step)
+    if not ok then
+        err = tostring(err)
+        pcall(function() dropEntry(NameFx.tag) end)
+        NameFx.tag = nil
+        NameFx.tagCache = nil
+        NameFx.retryAt = os.clock() + 0.5
+        if NameFx.lastErr ~= err then
+            NameFx.lastErr = err
+            warn("[SkyP] nametag error: " .. err)
+            notify("Nametag error", err, 8)
+        end
     end
 end))
 
@@ -9774,34 +9327,32 @@ local gridSize = side * CELL + (side - 1) * GAP
 local Panel = Instance.new("Frame")
 Panel.Size = UDim2.fromOffset(gridSize + 20, gridSize + 96)
 Panel.Position = UDim2.fromOffset(20, 80)
-Panel.BackgroundColor3 = _G.__KNP.bg
+Panel.BackgroundColor3 = Color3.fromRGB(8, 12, 22)
 Panel.BorderSizePixel = 0
 Panel.Parent = GridGui
 Instance.new("UICorner", Panel).CornerRadius = UDim.new(0, 14)
 local pStroke = Instance.new("UIStroke", Panel)
-pStroke.Color = _G.__KNP.accent
-pStroke.Transparency = 0.1
-pStroke.Thickness = 2
-_G.__KNP.fx(pStroke, "Color")
+pStroke.Color = Color3.fromRGB(47, 125, 255)
+pStroke.Transparency = 0.45
 
 local Title = Instance.new("TextLabel")
 Title.Size = UDim2.new(1, -40, 0, 28)
 Title.Position = UDim2.fromOffset(10, 4)
 Title.BackgroundTransparency = 1
-Title.Font = Enum.Font.Oswald
-Title.TextSize = 15
+Title.Font = Enum.Font.GothamBold
+Title.TextSize = 13
 Title.TextXAlignment = Enum.TextXAlignment.Left
-Title.TextColor3 = _G.__KNP.text
+Title.TextColor3 = Color3.fromRGB(232, 239, 253)
 Title.Text = I18N.T("Grid Tile")
 Title.Parent = Panel
 
 local CloseBtn = Instance.new("TextButton")
 CloseBtn.Size = UDim2.fromOffset(24, 24)
 CloseBtn.Position = UDim2.new(1, -30, 0, 6)
-CloseBtn.BackgroundColor3 = _G.__KNP.card2
+CloseBtn.BackgroundColor3 = Color3.fromRGB(23, 34, 62)
 CloseBtn.Text = "X"
-CloseBtn.Font = Enum.Font.Oswald
-CloseBtn.TextSize = 15
+CloseBtn.Font = Enum.Font.GothamBold
+CloseBtn.TextSize = 12
 CloseBtn.TextColor3 = Color3.new(1, 1, 1)
 CloseBtn.Parent = Panel
 Instance.new("UICorner", CloseBtn).CornerRadius = UDim.new(0, 6)
@@ -9815,9 +9366,9 @@ GridHolder.Position = UDim2.fromOffset(10, 36)
 GridHolder.BackgroundTransparency = 1
 GridHolder.Parent = Panel
 
-local COLOR_OFF = _G.__KNP.off
-local COLOR_ON = _G.__KNP.accent
-local COLOR_ME = _G.__KNP.accentLo
+local COLOR_OFF = Color3.fromRGB(20, 30, 54)
+local COLOR_ON = Color3.fromRGB(47, 125, 255)
+local COLOR_ME = Color3.fromRGB(22, 58, 130)
 local CellButtons = {}
 
 -- Grid dipakai untuk 2 hal: tile Auto Farm, atau tile break Pabrik
@@ -9825,7 +9376,6 @@ UI.GridMode = "farm"
 UI.gridTarget = function()
     if UI.GridMode == "pabrik" then return Pabrik.Tiles end
     if UI.GridMode == "lahan" then return Build.Tiles end
-    if UI.GridMode == "v2" and UI.V2 then return UI.V2.Tiles end
     return State.Offsets
 end
 
@@ -9841,8 +9391,8 @@ for row = 0, side - 1 do
         local btn = Instance.new("TextButton")
         btn.Size = UDim2.fromOffset(CELL, CELL)
         btn.Position = UDim2.fromOffset(col * (CELL + GAP), row * (CELL + GAP))
-        btn.Font = Enum.Font.Oswald
-        btn.TextSize = 15
+        btn.Font = Enum.Font.GothamBold
+        btn.TextSize = 12
         btn.TextColor3 = Color3.new(1, 1, 1)
         btn.Parent = GridHolder
         Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 8)
@@ -9852,9 +9402,8 @@ for row = 0, side - 1 do
             btn.BackgroundColor3 = COLOR_ME
             btn.AutoButtonColor = false
             local meStroke = Instance.new("UIStroke", btn)
-            meStroke.Color = _G.__KNP.accentHi
+            meStroke.Color = Color3.fromRGB(110, 175, 255)
             meStroke.Thickness = 2
-            _G.__KNP.fx(meStroke, "Color")
         else
             btn.Text = ""
             btn.BackgroundColor3 = UI.gridTarget()[key] and COLOR_ON or COLOR_OFF
@@ -9873,17 +9422,15 @@ local GridStart = Instance.new("TextButton")
 GridStart.Size = UDim2.new(1, -20, 0, 30)
 GridStart.Position = UDim2.new(0, 10, 1, -54)
 GridStart.BackgroundColor3 = COLOR_ON
-GridStart.Font = Enum.Font.Oswald
-GridStart.TextSize = 16
+GridStart.Font = Enum.Font.GothamBold
+GridStart.TextSize = 14
 GridStart.TextColor3 = Color3.new(1, 1, 1)
 GridStart.Text = "START"
 GridStart.Parent = Panel
 Instance.new("UICorner", GridStart).CornerRadius = UDim.new(0, 8)
 UI.GridStart = GridStart
 GridStart.MouseButton1Click:Connect(function()
-    if UI.GridMode == "v2" and UI.V2 then
-        if UI.V2.Running then UI.V2.stop() else UI.V2.start() end
-    elseif UI.GridMode == "lahan" then
+    if UI.GridMode == "lahan" then
         if Build.Running then Build.stop() elseif Build.start then Build.start() end
     elseif UI.GridMode == "pabrik" then
         if Pabrik.Running then Pabrik.stop() else Pabrik.start() end
@@ -9898,9 +9445,9 @@ local ClearBtn = Instance.new("TextButton")
 ClearBtn.Size = UDim2.new(1, -20, 0, 18)
 ClearBtn.Position = UDim2.new(0, 10, 1, -22)
 ClearBtn.BackgroundTransparency = 1
-ClearBtn.Font = Enum.Font.Oswald
-ClearBtn.TextSize = 15
-ClearBtn.TextColor3 = _G.__KNP.sub
+ClearBtn.Font = Enum.Font.Gotham
+ClearBtn.TextSize = 12
+ClearBtn.TextColor3 = Color3.fromRGB(128, 148, 186)
 ClearBtn.Text = I18N.T("Bersihkan pilihan")
 ClearBtn.Parent = Panel
 ClearBtn.MouseButton1Click:Connect(function()
@@ -9917,8 +9464,8 @@ do (function()
     local ModeBtn = Instance.new("TextButton")
     ModeBtn.Size = UDim2.fromOffset(62, 22)
     ModeBtn.Position = UDim2.new(1, -98, 0, 7)
-    ModeBtn.Font = Enum.Font.Oswald
-    ModeBtn.TextSize = 14
+    ModeBtn.Font = Enum.Font.GothamBold
+    ModeBtn.TextSize = 11
     ModeBtn.TextColor3 = Color3.new(1, 1, 1)
     ModeBtn.Parent = Panel
     Instance.new("UICorner", ModeBtn).CornerRadius = UDim.new(0, 6)
@@ -9927,26 +9474,21 @@ do (function()
     local function apply()
         local pab = UI.GridMode == "pabrik"
         local lah = UI.GridMode == "lahan"
-        local v2m = UI.GridMode == "v2"
-        ModeBtn.Text = v2m and "V2" or (lah and I18N.T("Lahan") or (pab and I18N.T("Pabrik") or "Farm"))
-        ModeBtn.BackgroundColor3 = v2m and _G.__KNP.accentLo or (lah and _G.__KNP.mode2
-            or (pab and _G.__KNP.mode3 or _G.__KNP.row2))
-        Title.Text = v2m and "Blok Padat Pabrik V2" or I18N.T(lah and "Tile Break Lahan" or (pab and "Tile Break Pabrik" or "Grid Tile"))
+        ModeBtn.Text = lah and I18N.T("Lahan") or (pab and I18N.T("Pabrik") or "Farm")
+        ModeBtn.BackgroundColor3 = lah and Color3.fromRGB(20, 150, 190)
+            or (pab and Color3.fromRGB(91, 76, 230) or Color3.fromRGB(31, 46, 82))
+        Title.Text = I18N.T(lah and "Tile Break Lahan" or (pab and "Tile Break Pabrik" or "Grid Tile"))
         for key in pairs(CellButtons) do paintCell(key) end
-        if v2m then
-            local run = UI.V2 and UI.V2.Running
-            GridStart.Text = run and "STOP V2" or "START V2"
-            GridStart.BackgroundColor3 = run and _G.__KNP.danger or COLOR_ON
-        elseif lah then
+        if lah then
             GridStart.Text = I18N.T(Build.Running and "STOP LAHAN" or "START LAHAN")
-            GridStart.BackgroundColor3 = Build.Running and _G.__KNP.danger or COLOR_ON
+            GridStart.BackgroundColor3 = Build.Running and Color3.fromRGB(232, 84, 104) or COLOR_ON
         elseif pab then
             GridStart.Text = I18N.T(Pabrik.Running and "STOP PABRIK" or "START PABRIK")
-            GridStart.BackgroundColor3 = Pabrik.Running and _G.__KNP.danger or COLOR_ON
+            GridStart.BackgroundColor3 = Pabrik.Running and Color3.fromRGB(232, 84, 104) or COLOR_ON
         else
             local run = State.Running and not State.Override
             GridStart.Text = run and "STOP" or "START"
-            GridStart.BackgroundColor3 = run and _G.__KNP.danger or COLOR_ON
+            GridStart.BackgroundColor3 = run and Color3.fromRGB(232, 84, 104) or COLOR_ON
         end
     end
 
@@ -9955,7 +9497,7 @@ do (function()
         apply()
     end
     ModeBtn.MouseButton1Click:Connect(function() -- Farm -> Pabrik -> Lahan -> Farm
-        local nxt = { farm = "pabrik", pabrik = "lahan", lahan = "v2", v2 = "farm" }
+        local nxt = { farm = "pabrik", pabrik = "lahan", lahan = "farm" }
         UI.setGridMode(nxt[UI.GridMode] or "farm")
     end)
     apply()
@@ -10005,17 +9547,17 @@ local function flyButton(text, yOffset, onHold)
     b.Size = UDim2.fromOffset(64, 64)
     b.AnchorPoint = Vector2.new(1, 0.5)
     b.Position = UDim2.new(1, -24, 0.5, yOffset)
-    b.BackgroundColor3 = _G.__KNP.side
+    b.BackgroundColor3 = Color3.fromRGB(11, 17, 32)
     b.BackgroundTransparency = 0.15
     b.Text = text
-    b.Font = Enum.Font.Oswald
+    b.Font = Enum.Font.GothamBold
     b.TextSize = 28
-    b.TextColor3 = _G.__KNP.accentHi
+    b.TextColor3 = Color3.fromRGB(110, 175, 255)
     b.AutoButtonColor = true
     b.Parent = FlyPad
     Instance.new("UICorner", b).CornerRadius = UDim.new(1, 0)
     local st = Instance.new("UIStroke", b)
-    st.Color = _G.__KNP.accent
+    st.Color = Color3.fromRGB(47, 125, 255)
     st.Thickness = 2
     -- dilepas saat jari diangkat (walau sudah geser keluar), supaya tidak nyangkut
     local heldInput = nil
@@ -10044,10 +9586,10 @@ flyButton("▼", 40, function(v) Misc.DownHeld = v end)
 -- UI WINDUI
 ---------------------------------------------------------------------
 local Window = I18N.wrap(WindUI:CreateWindow({
-    Title = "K. NEAR",
+    Title = "SkyP",
     Icon = "cloud-lightning",
-    Author = "https://discord.gg/5anHfrc69T",
-    Folder = "KNEAR",
+    Author = "https://discord.gg/s5ajQ2Cpdp",
+    Folder = "AlSkyP",
     Size = UDim2.fromOffset(640, 380),
     SideBarWidth = 150,
     SearchPlaceholder = I18N.T("Cari fitur..."),
@@ -10058,7 +9600,7 @@ local Window = I18N.wrap(WindUI:CreateWindow({
 -- Cadangan PC: kalau tombol susah dicari, tekan Insert.
 pcall(function()
     Window:EditOpenButton({
-        Title = "K. NEAR",
+        Title = "SkyP",
         Icon = "cloud-lightning",
         Draggable = true,
         OnlyMobile = false,
@@ -10068,7 +9610,7 @@ end)
 -- Kalau 1 elemen error, tab lain tetap dibuat
 local function safe(fn)
     local ok, err = pcall(fn)
-    if not ok then warn("[K. NEAR] UI error: " .. tostring(err)) end
+    if not ok then warn("[SkyP] UI error: " .. tostring(err)) end
 end
 
 -- Sidebar dikelompokkan: grup utama bisa dibuka / ditutup (isinya tab-tab)
@@ -10142,8 +9684,8 @@ end)
 
 Box.FarmCtl = box(FarmTab, "Kontrol", true)
 Box.FarmBlock = box(FarmTab, "Block", true)
-Box.FarmSpeed = box(FarmTab, "Mode & Kecepatan", false)
-Box.FarmUni = box(FarmTab, "Farm Terpadu (satu area)", true)
+Box.FarmAuto = box(FarmTab, "Otomatis", true)
+Box.FarmSpeed = box(FarmTab, "Lanjutan", false)
 
 safe(function()
     UI.FarmToggle = Box.FarmCtl:Toggle({
@@ -10158,6 +9700,32 @@ end)
 
 safe(function()
     Box.FarmCtl:Toggle({
+        Title = "Break Cepat",
+        Desc = "Break secepat batas server, tanpa jeda terbuang",
+        Value = State.Fast,
+        Callback = function(on)
+            State.Fast = on
+            State.NextHitAt = 0
+            if on then
+                if State.BreakMs > 220 then State.BreakMs = 220 end
+                if not Refs.Punch then notify("Break Cepat", "Referensi Pukul belum ada. Tekan 'Hubungkan ke game' dulu", 4) end
+            end
+        end,
+    })
+end)
+
+safe(function()
+    Box.FarmCtl:Dropdown({
+        Title = "Mode",
+        Desc = "Place + Break / Break saja / Place saja",
+        Values = { "Place + Break", "Break saja", "Place saja" },
+        Value = State.Mode,
+        Callback = function(opt) State.Mode = opt end,
+    })
+end)
+
+safe(function()
+    Box.FarmCtl:Toggle({
         Title = "Auto Collect",
         Desc = "Ambil drop di semua tile grid (caranya ikut Mode collect)",
         Value = State.AutoCollect,
@@ -10166,20 +9734,27 @@ safe(function()
 end)
 
 safe(function()
-    Box.FarmCtl:Dropdown({
+    Box.FarmSpeed:Dropdown({
         Title = "Mode collect",
         Desc = "Berlaku untuk semua fitur. Sentuhan = seperti main manual. Remote = ambil dari jauh (cara lama, cepat)",
-        Values = { "Sentuhan", "Remote" },
-        Value = State.CollectMode,
+        Values = { "Otomatis (pintar)", "Sentuhan", "Remote" },
+        Value = State.CollectAuto and "Otomatis (pintar)" or State.CollectMode,
         Callback = function(v)
             if type(v) == "table" then v = v[1] end
-            if v == "Sentuhan" or v == "Remote" then State.CollectMode = v end
+            if v == "Otomatis (pintar)" then
+                State.CollectAuto = true
+                State.CollectMode = "Remote"
+                Drops.AutoBack = 0
+            elseif v == "Sentuhan" or v == "Remote" then
+                State.CollectAuto = false
+                State.CollectMode = v
+            end
         end,
     })
 end)
 
 safe(function()
-    Box.FarmCtl:Toggle({
+    Box.FarmSpeed:Toggle({
         Title = "Collect di sekitar karakter",
         Desc = "Mode Remote: ambil semua drop dalam radius, kapan saja",
         Value = State.CollectAround,
@@ -10187,14 +9762,14 @@ safe(function()
     })
 end)
 
-addNumber(Box.FarmCtl, {
+addNumber(Box.FarmSpeed, {
     Title = "Radius collect (mode Remote)",
     Desc = "Jarak ambil drop di sekitar karakter (tile)",
     Min = 1, Max = 5, Step = 1, Default = State.CollectRadius,
     Callback = function(v) State.CollectRadius = math.floor(v) end,
 })
 
-addNumber(Box.FarmCtl, {
+addNumber(Box.FarmSpeed, {
     Title = "Jangkauan Remote (tile)",
     Desc = "Jarak maksimal permintaan Remote. Drop yang lebih jauh tidak ditembak (ditolak server), tapi dijemput",
     Min = 1, Max = 5, Step = 1, Default = State.RemoteReach,
@@ -10202,7 +9777,7 @@ addNumber(Box.FarmCtl, {
 })
 
 safe(function()
-    Box.FarmCtl:Toggle({
+    Box.FarmSpeed:Toggle({
         Title = "Jemput drop yang jauh",
         Desc = "Drop di luar jangkauan Remote tapi dalam radius: karakter jalan mendekat lalu balik. Hanya saat tidak ada fitur lain yang menggerakkan karakter",
         Value = State.RemoteChase,
@@ -10221,7 +9796,7 @@ end)
 
 -- ===== FARM TERPADU =====
 safe(function()
-    Box.FarmUni:Toggle({
+    Box.FarmAuto:Toggle({
         Title = "Auto Drop Seed",
         Desc = "Seed hasil break di-drop otomatis kalau sudah mencapai jumlah di bawah",
         Value = State.SeedDrop,
@@ -10233,19 +9808,19 @@ safe(function()
         end,
     })
 end)
-addNumber(Box.FarmUni, {
+addNumber(Box.FarmSpeed, {
     Title = "Drop kalau seed sudah",
     Desc = "Contoh 200",
     Min = 2, Max = 200, Step = 1, Default = State.SeedDropAt,
     Callback = function(v) State.SeedDropAt = math.floor(v) end,
 })
-addNumber(Box.FarmUni, {
+addNumber(Box.FarmSpeed, {
     Title = "Sisakan seed",
     Min = 0, Max = 199, Step = 1, Default = State.SeedKeep,
     Callback = function(v) State.SeedKeep = math.floor(v) end,
 })
 safe(function()
-    UI.UniDropWorld = Box.FarmUni:Input({
+    UI.UniDropWorld = Box.FarmSpeed:Input({
         Title = "Lokasi drop (world)",
         Desc = "Kosong = world ini | WORLD | WORLD:ID (pintu)",
         Value = Pabrik.DropWorld,
@@ -10257,7 +9832,7 @@ safe(function()
     })
 end)
 safe(function()
-    Box.FarmUni:Button({
+    Box.FarmSpeed:Button({
         Title = "Simpan posisi karakter sebagai lokasi drop",
         Desc = "Berdiri di tempat drop (boleh di world lain), lalu tekan",
         Callback = function()
@@ -10277,20 +9852,20 @@ safe(function()
     })
 end)
 safe(function()
-    Box.FarmUni:Toggle({
+    Box.FarmAuto:Toggle({
         Title = "Auto Refill Block",
         Desc = "Block habis: ambil block yang tersedia di sekitar, lalu lanjut",
         Value = State.AutoRefill,
         Callback = function(on) State.AutoRefill = on end,
     })
 end)
-addNumber(Box.FarmUni, {
+addNumber(Box.FarmSpeed, {
     Title = "Jarak cari block (tile)",
     Min = 3, Max = 30, Step = 1, Default = State.RefillRadius,
     Callback = function(v) State.RefillRadius = math.floor(v) end,
 })
 safe(function()
-    Box.FarmUni:Toggle({
+    Box.FarmAuto:Toggle({
         Title = "Auto Return",
         Desc = "Kembali ke posisi awal farm (posisi saat START) setelah refill / drop / bergeser",
         Value = State.AutoReturn,
@@ -10493,17 +10068,7 @@ safe(function()
 end)
 
 -- ===== FARM: MODE & KECEPATAN =====
-local SpeedTab = Box.FarmSpeed -- digabung ke tab Farm
-
-safe(function()
-    SpeedTab:Dropdown({
-        Title = "Mode",
-        Desc = "Place semua tile dulu, lalu break",
-        Values = { "Place + Break", "Break saja", "Place saja" },
-        Value = State.Mode,
-        Callback = function(opt) State.Mode = opt end,
-    })
-end)
+local SpeedTab = Box.FarmSpeed -- digabung ke tab Farm (kotak "Lanjutan")
 
 addNumber(SpeedTab, {
     Title = "Speed Place (ms)",
@@ -10619,35 +10184,6 @@ addNumber(MiscTab, {
     Min = 50, Max = 500, Step = 10, Default = Misc.Speed,
     Callback = function(v) setSpeed(v) end,
 })
-
-safe(function()
-    MiscTab:Toggle({
-        Title = "Sembunyikan bendera nametag",
-        Desc = "Sembunyikan ikon bendera di samping nama",
-        Value = Misc.HideFlag == true,
-        Callback = function(on) Misc.HideFlag = on end,
-    })
-end)
-
-safe(function()
-    MiscTab:Toggle({
-        Title = "Ganti bendera jadi cloud-lightning",
-        Desc = "Ganti ikon bendera di samping nama dengan ikon cloud-lightning",
-        Value = Misc.SwapFlag == true,
-        Callback = function(on) Misc.SwapFlag = on end,
-    })
-end)
-
-safe(function()
-    MiscTab:Button({
-        Title = "Salin struktur nametag",
-        Desc = "Kalau bendera belum hilang: tekan, lalu kirim hasilnya (disalin & tampil di console)",
-        Callback = function()
-            local n = Misc.DumpNameTag()
-            notify("Nametag", "Struktur disalin (" .. tostring(n) .. " baris), lihat console F9", 5)
-        end,
-    })
-end)
 
 safe(function()
     MiscTab:Toggle({
@@ -11021,7 +10557,7 @@ do (function() -- fungsi sendiri: variabel di dalam tidak ikut batas 200 local
         Guard.BackText = nil
         task.spawn(function()
             local ok, err = pcall(resumeAll, saved, token)
-            if not ok then warn("[K. NEAR] Penjaga lanjut error: " .. tostring(err)) end
+            if not ok then warn("[SkyP] Penjaga lanjut error: " .. tostring(err)) end
             if Guard.Token == token and Guard.Mode == "back" then
                 Guard.Mode, Guard.Saved, Guard.BackText = "idle", nil, nil
             end
@@ -11255,7 +10791,7 @@ do (function() -- fungsi sendiri: variabel di dalam tidak ikut batas 200 local
         while alive() do
             local here = (Guard.Mode ~= "away" and Guard.Mode ~= "out") and playersHere() or {}
             local ok, err = pcall(Guard.tick, here)
-            if not ok then warn("[K. NEAR] Penjaga error: " .. tostring(err)) end
+            if not ok then warn("[SkyP] Penjaga error: " .. tostring(err)) end
             Guard.updateStatus(here)
             task.wait(0.5)
         end
@@ -12677,7 +12213,7 @@ do (function()
             -- tombol START di Grid (mode lahan)
             if UI.GridMode == "lahan" and UI.GridStart then
                 UI.GridStart.Text = I18N.T(Build.Running and "STOP LAHAN" or "START LAHAN")
-                UI.GridStart.BackgroundColor3 = Build.Running and _G.__KNP.danger or _G.__KNP.accent
+                UI.GridStart.BackgroundColor3 = Build.Running and Color3.fromRGB(232, 84, 104) or Color3.fromRGB(47, 125, 255)
             end
             task.wait(1)
         end
@@ -12752,7 +12288,7 @@ do (function()
             return Vend.labels(m)
         end)
         if not ok then
-            warn("[K. NEAR] daftar item vending error: " .. tostring(labels))
+            warn("[SkyP] daftar item vending error: " .. tostring(labels))
             return 0, "error: " .. tostring(labels)
         end
         local info = ("tas %d | drop %d | vending %d"):format(st.inv, st.drop, st.vend)
@@ -12765,7 +12301,7 @@ do (function()
             end)
             if not okR then
                 Vend.ItemSig = nil
-                warn("[K. NEAR] refresh dropdown item vending gagal: " .. tostring(errR))
+                warn("[SkyP] refresh dropdown item vending gagal: " .. tostring(errR))
                 notify("Vending", "Daftar item gagal dimuat: " .. tostring(errR), 6)
                 return
             end
@@ -13025,7 +12561,7 @@ do (function()
             -- tombol START di Grid (mode pabrik)
             if UI.GridMode == "pabrik" and UI.GridStart then
                 UI.GridStart.Text = I18N.T(Pabrik.Running and "STOP PABRIK" or "START PABRIK")
-                UI.GridStart.BackgroundColor3 = Pabrik.Running and _G.__KNP.danger or _G.__KNP.accent
+                UI.GridStart.BackgroundColor3 = Pabrik.Running and Color3.fromRGB(232, 84, 104) or Color3.fromRGB(47, 125, 255)
             end
             task.wait(1)
         end
@@ -13049,6 +12585,9 @@ local Rejoin = {
     Server = true,      -- rejoin kalau disconnect dari server
     DelaySec = 5,
     ScriptUrl = "",
+    LocalFile = "SkyP/SkyP.lua", -- cadangan kalau URL kosong: file script di folder workspace executor
+    HookOn = false,     -- webhook khusus rejoin (terpisah dari tab Discord)
+    HookUrl = "",
     Keep = false,       -- selalu kembali ke world tujuan kalau berada di luar world
     Target = "",        -- world tujuan (kosong = world terakhir)
     LastWorld = "",     -- world terakhir yang dimasuki
@@ -13096,28 +12635,39 @@ do (function()
     local function onWorldClosed(msg)
         if not (Rejoin.On and Rejoin.World) or Rejoin.Busy or Pabrik.Traveling then return end
         if Guard.Mode == "away" or Guard.Mode == "out" then return end -- Penjaga yang keluar
+        -- aktivitas yang sedang jalan (kalau ada) dilanjutkan; kalau tidak ada, tetap masuk lagi
         local saved = Rejoin.Last
-        if not saved or saved.world == "" or os.clock() - Rejoin.LastAt > 10 then return end
+        if saved and (saved.world == "" or os.clock() - Rejoin.LastAt > 10) then saved = nil end
+        local world = (saved and saved.world) or Rejoin.LastWorld or ""
+        if world == "" then world = Rejoin.targetWorld() end
+        if world == "" then return end
         Rejoin.Busy = true
         task.spawn(function()
             Guard.stopAll()
             local text = tostring(msg or ""):gsub("`.", "")
-            Rejoin.Status = "Terlempar dari " .. saved.world .. ". Masuk lagi..."
-            Hook.send("rejoin", "Terlempar dari world " .. saved.world .. (text ~= "" and (" (" .. text .. ")") or ""))
+            Rejoin.Status = "Terlempar dari " .. world .. ". Masuk lagi..."
+            Hook.send("rejoin", "Terlempar dari world " .. world .. (text ~= "" and (" (" .. text .. ")") or ""))
             task.wait(Rejoin.DelaySec + 1.5) -- tunggu animasi pintu selesai
-            for try = 1, 3 do
+            for try = 1, 5 do
                 if not (alive() and Rejoin.On) then break end
-                local ok, err = Guard.enterWorld(saved.world)
+                local ok, err = Guard.enterWorld(world)
                 if ok then
                     task.wait(1.5)
-                    resume(saved, "Masuk lagi")
+                    if saved then
+                        resume(saved, "Masuk lagi")
+                    else
+                        Guard.afterEnter()
+                        Rejoin.Count += 1
+                        Rejoin.Status = "Masuk lagi ke " .. world .. " berhasil"
+                        Hook.send("rejoin", "Masuk lagi ke " .. world)
+                    end
                     Rejoin.Busy = false
                     return
                 end
-                Rejoin.Status = ("Gagal masuk (%d/3): %s"):format(try, tostring(err))
-                task.wait(10)
+                Rejoin.Status = ("Gagal masuk (%d/5): %s"):format(try, tostring(err))
+                task.wait(8)
             end
-            Rejoin.Status = "Gagal masuk lagi ke " .. saved.world
+            Rejoin.Status = "Gagal masuk lagi ke " .. world
             notify("Auto Reconnect", Rejoin.Status, 5)
             Hook.send("rejoin", Rejoin.Status)
             Rejoin.Busy = false
@@ -13239,39 +12789,100 @@ do (function()
     end)
 
     -- ===== disconnect dari server =====
+    -- PATCH: auto execute lagi setelah teleport (URL raw / file lokal), di-queue juga saat game teleport sendiri
     local function queueScript()
-        local q = queue_on_teleport or (syn and syn.queue_on_teleport) or (fluxus and fluxus.queue_on_teleport)
+        local q = queue_on_teleport or queueonteleport or (syn and syn.queue_on_teleport)
+            or (fluxus and fluxus.queue_on_teleport)
+        if type(q) ~= "function" then return false, "executor tidak punya queue_on_teleport" end
         local url = tostring(Rejoin.ScriptUrl or "")
-        if type(q) == "function" and string.sub(url, 1, 8) == "https://" then
-            pcall(q, ("loadstring(game:HttpGet(%q))()"):format(url))
-            return true
+        local wait = "if not game:IsLoaded() then game.Loaded:Wait() end task.wait(3) "
+        if string.sub(url, 1, 8) == "https://" then
+            return pcall(q, wait .. ("loadstring(game:HttpGet(%q))()"):format(url)), "url"
         end
-        return false
+        local f = tostring(Rejoin.LocalFile or "")
+        local okF, has = pcall(function() return f ~= "" and isfile and isfile(f) end)
+        if okF and has then
+            return pcall(q, wait .. ("loadstring(readfile(%q))()"):format(f)), "file"
+        end
+        return false, "isi URL script / simpan script di " .. f
     end
+    Rejoin.queueScript = queueScript
+    pcall(function()
+        table.insert(Connections, LocalPlayer.OnTeleport:Connect(function(st)
+            if alive() and Rejoin.On and st == Enum.TeleportState.Started then queueScript() end
+        end))
+    end)
+    pcall(function()
+        table.insert(Connections, TeleportService.TeleportInitFailed:Connect(function(plr, res, msg)
+            if alive() and plr == LocalPlayer and Rejoin.Leaving then
+                Rejoin.Status = "Teleport gagal (" .. tostring(msg or res) .. "), dicoba lagi"
+                Rejoin.RetryNow = true
+            end
+        end))
+    end)
+
+    -- webhook khusus rejoin: embed langsung dikirim (tidak antri, supaya sempat sebelum teleport)
+    local function rejoinHook(text)
+        if not Rejoin.HookOn or not Hook.valid(Rejoin.HookUrl) then return end
+        local req = (syn and syn.request) or (http and http.request) or http_request or request or (fluxus and fluxus.request)
+        if not req then return end
+        local t = tostring(text)
+        local color = (t:find("Gagal") or t:find("gagal")) and 0xE85468
+            or ((t:find("Terlempar") or t:find("Disconnect")) and 0xFFB020 or 0x2F7DFF)
+        local body = HttpService:JSONEncode({
+            username = "SkyP Rejoin",
+            embeds = { {
+                title = "Auto Rejoin",
+                description = t,
+                color = color,
+                fields = {
+                    { name = "Akun", value = LocalPlayer.Name, inline = true },
+                    { name = "World", value = (Guard.worldName() ~= "" and Guard.worldName()) or (Rejoin.LastWorld ~= "" and Rejoin.LastWorld) or "-", inline = true },
+                    { name = "Rejoin berhasil", value = tostring(Rejoin.Count), inline = true },
+                },
+                footer = { text = os.date("%d/%m/%Y %H:%M:%S") },
+            } },
+        })
+        task.spawn(function()
+            pcall(req, { Url = Rejoin.HookUrl, Method = "POST", Headers = { ["Content-Type"] = "application/json" }, Body = body })
+        end)
+    end
+    Hook.onRejoin = rejoinHook
 
     local function onDisconnect(msg)
         if not (Rejoin.On and Rejoin.Server) or Rejoin.Leaving then return end
         Rejoin.Leaving = true
         local saved = Rejoin.Last or (Guard.anyRunning() and Guard.snapshot()) or nil
-        local world = saved and saved.world or Guard.worldName()
-        if canFile and saved then
+        -- setelah disconnect nama world sudah kosong: pakai world terakhir yang tercatat
+        local world = (saved and saved.world) or Rejoin.LastWorld or ""
+        if world == "" then world = Guard.worldName() or "" end
+        if world == "" then world = Rejoin.targetWorld() end
+        if canFile and world ~= "" then
+            local s2 = saved or {}
             local data = {
-                world = saved.world, farm = saved.farm, clear = saved.clear, farmer = saved.farmer,
-                spam = saved.spam, splice = saved.splice, pabrik = saved.pabrik, build = saved.build,
-                tx = saved.tx, ty = saved.ty, at = os.time(),
+                world = world, farm = s2.farm, clear = s2.clear, farmer = s2.farmer,
+                spam = s2.spam, splice = s2.splice, pabrik = s2.pabrik, build = s2.build,
+                tx = s2.tx, ty = s2.ty, at = os.time(),
             }
-            pcall(function() writefile(PENDING, HttpService:JSONEncode(data)) end)
+            pcall(function()
+                if type(makefolder) == "function" and type(isfolder) == "function" and not isfolder("Fian") then makefolder("Fian") end
+                writefile(PENDING, HttpService:JSONEncode(data))
+            end)
         end
-        local queued = queueScript()
-        Rejoin.Status = "Disconnect: rejoin..." .. (queued and "" or " (script tidak di-queue)")
+        local queued, how = queueScript()
+        Rejoin.Status = "Disconnect: rejoin..." .. (queued and (" (script di-queue lewat " .. tostring(how) .. ")")
+            or (" (script tidak di-queue: " .. tostring(how) .. ", atau pakai autoexec)"))
         Hook.send("rejoin", "Disconnect dari server (" .. tostring(msg) .. "). Rejoin ke " .. (world ~= "" and world or "game"))
         task.spawn(function()
             task.wait(Rejoin.DelaySec)
             while alive() do
+                Rejoin.RetryNow = false
                 pcall(function()
                     TeleportService:Teleport(game.PlaceId, LocalPlayer, (world ~= "") and { world = world } or nil)
                 end)
-                task.wait(15) -- belum pindah: coba lagi
+                local t = os.clock()
+                repeat task.wait(0.5) until Rejoin.RetryNow or os.clock() - t > 12 -- belum pindah: coba lagi
+                if Rejoin.RetryNow then task.wait(3) end
             end
         end)
     end
@@ -13280,6 +12891,22 @@ do (function()
         table.insert(Connections, GuiService.ErrorMessageChanged:Connect(function(msg)
             if alive() and type(msg) == "string" and msg ~= "" then onDisconnect(msg) end
         end))
+    end)
+    -- jalur kedua: layar error Roblox (lebih andal di HP / executor tertentu)
+    task.spawn(function()
+        local okP, overlay = pcall(function()
+            return game:GetService("CoreGui"):WaitForChild("RobloxPromptGui", 15):WaitForChild("promptOverlay", 15)
+        end)
+        if okP and overlay then
+            table.insert(Connections, overlay.ChildAdded:Connect(function(c)
+                if alive() and c.Name == "ErrorPrompt" then
+                    task.wait(0.5)
+                    local m = ""
+                    pcall(function() m = GuiService:GetErrorMessage() end)
+                    onDisconnect(m ~= "" and m or "ErrorPrompt")
+                end
+            end))
+        end
     end)
 
     -- ===== setelah execute: lanjutkan dari catatan rejoin =====
@@ -13297,20 +12924,28 @@ do (function()
         Rejoin.Status = "Rejoin: menunggu masuk " .. saved.world
         -- tunggu game masuk world (lewat data teleport); kalau tidak, masuk sendiri
         local t0 = os.clock()
-        local tried = false
-        while alive() and os.clock() - t0 < 60 do
+        local nextTry = t0 + 12
+        while alive() and os.clock() - t0 < 120 do
             if Refs.World and Guard.worldName() == saved.world and Auto.here() then break end
             if not Refs.World then pcall(reconnectFn) end
-            if Refs.World and not tried and os.clock() - t0 > 12 then
-                tried = true
-                Guard.enterWorld(saved.world)
+            if Refs.World and os.clock() >= nextTry then -- game tidak langsung masuk: masuk sendiri (diulang)
+                nextTry = os.clock() + 20
+                Rejoin.Status = "Rejoin: masuk sendiri ke " .. saved.world
+                pcall(Guard.enterWorld, saved.world)
             end
             task.wait(2)
         end
         if alive() and Guard.worldName() == saved.world then
             pcall(reconnectFn)
             task.wait(1)
-            resume(saved, "Rejoin server")
+            if saved.farm or saved.clear or saved.farmer or saved.spam or saved.splice or saved.pabrik or saved.build then
+                resume(saved, "Rejoin server")
+            else
+                Guard.afterEnter()
+                Rejoin.Count += 1
+                Rejoin.Status = "Rejoin server ke " .. saved.world .. " berhasil"
+                Hook.send("rejoin", "Rejoin server ke " .. saved.world)
+            end
         else
             Rejoin.Status = "Rejoin: gagal masuk " .. saved.world
             Hook.send("rejoin", Rejoin.Status)
@@ -13319,7 +12954,7 @@ do (function()
     end
 end)() end
 
-Config.add("Reconnect", Rejoin, { "On", "World", "Server", "DelaySec", "ScriptUrl", "Keep", "Target" })
+Config.add("Reconnect", Rejoin, { "On", "World", "Server", "DelaySec", "ScriptUrl", "Keep", "Target", "LocalFile", "HookOn", "HookUrl" })
 Config.add("Discord", Hook, { "On", "Url", "Penjaga", "Stop", "Full", "Bonus", "Rejoin", "Pabrik", "ReportMin" })
 
 -- ===== TAB: TITIK DROP (dipakai Pabrik, Farmer, Auto Farm) =====
@@ -13401,7 +13036,7 @@ do (function()
 end)() end
 
 -- ===== TAB: KONEKSI =====
--- ===== DIRT FARM - diadaptasi dari script "AutoDirtFarm" (Blazy) ke K. NEAR =====
+-- ===== DIRT FARM - diadaptasi dari script "AutoDirtFarm" (Blazy) ke SkyP =====
 do
     (function()
         local RT = {
@@ -15223,7 +14858,7 @@ do
                     break
                 end
                 errors = errors + 1
-                warn("[K. NEAR] Dirt Farm error: " .. tostring(err))
+                warn("[SkyP] Dirt Farm error: " .. tostring(err))
                 logEv("ERROR #" .. errors .. ": " .. tostring(err))
                 setStatus("Error (coba lagi): " .. tostring(err))
                 task.wait(2)
@@ -15369,271 +15004,6 @@ do
         end)
     end)()
 end
--- ===== TAB: PABRIK V2 =====
-do (function()
-    local V2 = UI.V2
-    if not V2 then return end
-    local VTab = makeTab("Pabrik V2", "zap", "farm")
-
-    safe(function()
-        UI.V2Status = VTab:Paragraph({ Title = "Status Pabrik V2", Desc = "-" })
-    end)
-
-    local bCtl = box(VTab, "Kontrol", true)
-    local bAuto = box(VTab, "Auto Detect (PNB kiri-kanan)", true)
-    local bPB = box(VTab, "Put & break di atas kepala", true)
-    local bPlant = box(VTab, "Tanam di atas blok padat", true)
-    local bCol = box(VTab, "Auto collect (radius tile)", true)
-    local bDrop = box(VTab, "Auto drop seed", true)
-
-    local function idFromLabel(opt) return tonumber(string.match(opt or "", "%[(%d+)%]$")) end
-    local function numInput(tab, o)
-        safe(function()
-            tab:Input({
-                Title = o.Title, Desc = o.Desc,
-                Value = tostring(o.Default), Placeholder = tostring(o.Default),
-                Callback = function(text)
-                    local v = tonumber(text)
-                    if v then o.Callback(math.floor(math.clamp(v, o.Min, o.Max))) end
-                end,
-            })
-        end)
-    end
-
-    -- ---- Kontrol ----
-    safe(function()
-        UI.V2Toggle = bCtl:Toggle({
-            Title = "Jalankan Pabrik V2",
-            Desc = "Karakter diam: put & break di atas kepala, tanam & panen di blok padat, drop seed",
-            Value = false,
-            Callback = function(on)
-                if on then
-                    if not V2.Running and V2.start() == false then
-                        pcall(function() UI.V2Toggle:Set(false) end)
-                    end
-                elseif V2.Running then
-                    V2.stop("Dihentikan")
-                end
-            end,
-        })
-    end)
-    safe(function()
-        bCtl:Button({
-            Title = "Reset statistik V2",
-            Callback = function() V2.resetStats() end,
-        })
-    end)
-
-    -- ---- Auto Detect ----
-    safe(function()
-        bAuto:Toggle({
-            Title = "Auto Detect",
-            Desc = "PNB di kiri & kanan (x∆x). Ada drop -> ambil dulu. Block habis -> panen & tanam per pohon, lalu lanjut PNB di posisi awal",
-            Value = V2.Auto,
-            Callback = function(on)
-                V2.Auto = on
-                if on then V2.initHome() end
-                if V2.Running then -- ganti mode langsung: restart loop dengan mode baru
-                    V2.stop("Ganti mode")
-                    task.wait(0.2)
-                    V2.start()
-                end
-            end,
-        })
-    end)
-    safe(function()
-        bAuto:Button({
-            Title = "Tentukan posisi break (posisi sekarang)",
-            Desc = "Tempat karakter berdiri saat PNB. Setelah panen/tanam selalu balik ke sini",
-            Callback = function()
-                if V2.setHome(true) then
-                    notify("Pabrik V2", ("Posisi break: (%d,%d)"):format(V2.Home.x, V2.Home.y), 3)
-                else
-                    notify("Pabrik V2", "Kamu belum masuk world", 3)
-                end
-            end,
-        })
-    end)
-    safe(function()
-        bAuto:Button({
-            Title = "Hapus posisi break",
-            Desc = "Posisi awal diambil ulang saat START",
-            Callback = function() V2.clearHome() end,
-        })
-    end)
-    safe(function()
-        bAuto:Input({
-            Title = "Posisi break custom (X,Y)",
-            Desc = "Ketik koordinat tile, contoh 50,30. Kosong / - = hapus. Collect juga mengikuti posisi ini",
-            Value = (V2.HomeX >= 0) and (V2.HomeX .. "," .. V2.HomeY) or "",
-            Placeholder = "contoh: 50,30",
-            Callback = function(text)
-                local a, b = string.match(tostring(text or ""), "^%s*(%d+)%s*[,; ]%s*(%d+)%s*$")
-                if a then
-                    V2.setHome(true, tonumber(a), tonumber(b))
-                    notify("Pabrik V2", ("Posisi break custom: (%s,%s)"):format(a, b), 3)
-                elseif tostring(text or ""):match("^%s*%-?%s*$") then
-                    V2.clearHome()
-                    notify("Pabrik V2", "Posisi break custom dihapus", 3)
-                else
-                    notify("Pabrik V2", "Format salah, contoh: 50,30", 3)
-                end
-            end,
-        })
-    end)
-
-    -- ---- Put & break ----
-    safe(function()
-        bPB:Toggle({
-            Title = "Put & break di atas kepala",
-            Desc = "Place block di tile tepat di atas kepala lalu pecahkan, berulang",
-            Value = V2.PB,
-            Callback = function(on) V2.PB = on end,
-        })
-    end)
-    safe(function()
-        UI.V2BlockDD = bPB:Dropdown({
-            Title = "Block yang di-put",
-            Desc = "Kosong = otomatis dari seed (Dirt Seed -> Dirt)",
-            Values = { "(memuat...)" },
-            Callback = function(opt)
-                local id = idFromLabel(opt)
-                if id then V2.BlockId = id end
-            end,
-        })
-    end)
-    addNumber(bPB, {
-        Title = "Jeda antar pukulan (ms)",
-        Desc = "Makin kecil makin cepat",
-        Min = 50, Max = 500, Step = 10, Default = V2.PunchMs,
-        Callback = function(v) V2.PunchMs = math.floor(v) end,
-    })
-
-    -- ---- Tanam di atas blok padat ----
-    safe(function()
-        bPlant:Toggle({
-            Title = "Tanam seed",
-            Desc = "Seed ditanam tepat di atas blok padat yang kamu tentukan",
-            Value = V2.Plant,
-            Callback = function(on) V2.Plant = on end,
-        })
-    end)
-    safe(function()
-        bPlant:Toggle({
-            Title = "Panen otomatis",
-            Desc = "Pecahkan pohon yang sudah siap panen di spot tanam",
-            Value = V2.Harvest,
-            Callback = function(on) V2.Harvest = on end,
-        })
-    end)
-    safe(function()
-        UI.V2SeedDD = bPlant:Dropdown({
-            Title = "Seed",
-            Desc = "Seed yang ditanam, juga seed yang di-drop",
-            Values = { "(memuat...)" },
-            Callback = function(opt)
-                local id = idFromLabel(opt)
-                if id then V2.SeedId = id end
-            end,
-        })
-    end)
-    safe(function()
-        bPlant:Button({
-            Title = "Tentukan blok padat (Grid)",
-            Desc = "Pilih kotak = blok padat; seed ditanam di atasnya. ME = posisi berdiri",
-            Callback = function()
-                if UI.setGridMode then UI.setGridMode("v2") end
-                if UI.GridGui then UI.GridGui.Enabled = true end
-            end,
-        })
-    end)
-    safe(function()
-        bPlant:Button({
-            Title = "Tandai blok tepat di bawah kaki",
-            Callback = function()
-                if V2.markBelowFeet() then
-                    notify("Pabrik V2", "Blok di bawah kaki ditandai", 3)
-                    if UI.GridMode == "v2" and UI.setGridMode then UI.setGridMode("v2") end
-                else
-                    notify("Pabrik V2", "Kamu belum masuk world", 3)
-                end
-            end,
-        })
-    end)
-    safe(function()
-        bPlant:Button({
-            Title = "Hapus semua blok yang ditentukan",
-            Callback = function()
-                for k in pairs(V2.Tiles) do V2.Tiles[k] = nil end
-                if UI.GridMode == "v2" and UI.setGridMode then UI.setGridMode("v2") end
-                notify("Pabrik V2", "Semua blok padat dihapus", 3)
-            end,
-        })
-    end)
-    addNumber(bPlant, {
-        Title = "Jeda tanam / panen (ms)",
-        Min = 60, Max = 600, Step = 10, Default = V2.PlantMs,
-        Callback = function(v) V2.PlantMs = math.floor(v) end,
-    })
-
-    -- ---- Collect ----
-    safe(function()
-        bCol:Toggle({
-            Title = "Auto collect",
-            Desc = "Otomatis. Auto Detect: animasi sentuhan badan di sekitar posisi break. Mode biasa: sapu remote dalam radius",
-            Value = V2.Collect,
-            Callback = function(on) V2.Collect = on end,
-        })
-    end)
-    addNumber(bCol, {
-        Title = "Radius collect (tile)",
-        Desc = "Server game biasanya hanya menerima drop sampai +-2 tile (RemoteReach)",
-        Min = 1, Max = 6, Step = 1, Default = V2.CollectR,
-        Callback = function(v) V2.CollectR = math.floor(v) end,
-    })
-
-    -- ---- Drop seed ----
-    safe(function()
-        bDrop:Toggle({
-            Title = "Auto drop seed",
-            Desc = "Drop di tempat berdiri saat seed mencapai batas",
-            Value = V2.Drop,
-            Callback = function(on) V2.Drop = on end,
-        })
-    end)
-    numInput(bDrop, {
-        Title = "Drop kalau seed sudah",
-        Desc = "Ketik angka (contoh 150)",
-        Min = 1, Max = 9999, Default = V2.DropAt,
-        Callback = function(v) V2.DropAt = v end,
-    })
-    numInput(bDrop, {
-        Title = "Jumlah seed yang di-drop",
-        Desc = "Custom, contoh 100. Lebih dari 200 dipecah otomatis",
-        Min = 1, Max = 9999, Default = V2.DropN,
-        Callback = function(v) V2.DropN = v end,
-    })
-    numInput(bDrop, {
-        Title = "Sisakan seed",
-        Desc = "Untuk ditanam lagi, tidak ikut di-drop",
-        Min = 0, Max = 9999, Default = V2.Keep,
-        Callback = function(v) V2.Keep = v end,
-    })
-
-    -- status hidup
-    task.spawn(function()
-        local last
-        while alive() do
-            task.wait(0.5)
-            local ok, txt = pcall(V2.statusText)
-            if ok and UI.V2Status and txt ~= last then
-                last = txt
-                pcall(function() UI.V2Status:SetDesc(txt) end)
-            end
-        end
-    end)
-end)() end
-
 local ConnTab = makeTab("Koneksi", "plug", "setel")
 
 safe(function()
@@ -15816,6 +15186,62 @@ do (function()
             end,
         })
     end)
+
+    safe(function()
+        rBox:Input({
+            Title = "File script lokal (cadangan)",
+            Desc = "Dipakai kalau URL kosong. Simpan script ini di folder workspace executor",
+            Value = Rejoin.LocalFile,
+            Placeholder = "SkyP/SkyP.lua",
+            Callback = function(text) Rejoin.LocalFile = (tostring(text or ""):gsub("^%s+", ""):gsub("%s+$", "")) end,
+        })
+    end)
+
+    safe(function()
+        rBox:Button({
+            Title = "Tes auto execute",
+            Desc = "Cek apakah script bisa di-queue untuk jalan lagi setelah teleport",
+            Callback = function()
+                local ok, how = Rejoin.queueScript()
+                notify("Auto Rejoin", ok and ("OK, script di-queue lewat " .. tostring(how)) or ("Gagal: " .. tostring(how)), 5)
+            end,
+        })
+    end)
+
+    local rHook = box(ConnTab, "Webhook Rejoin", false)
+    safe(function()
+        rHook:Toggle({
+            Title = "Webhook rejoin",
+            Desc = "Kirim notifikasi terlempar / disconnect / masuk lagi ke Discord",
+            Value = Rejoin.HookOn,
+            Callback = function(on) Rejoin.HookOn = on end,
+        })
+    end)
+    safe(function()
+        rHook:Input({
+            Title = "URL webhook rejoin",
+            Desc = "Boleh beda dengan webhook di tab Discord",
+            Value = Rejoin.HookUrl,
+            Placeholder = "https://discord.com/api/webhooks/...",
+            Callback = function(text) Rejoin.HookUrl = (tostring(text or ""):gsub("%s", "")) end,
+        })
+    end)
+    safe(function()
+        rHook:Button({
+            Title = "Tes webhook rejoin",
+            Callback = function()
+                if not Hook.valid(Rejoin.HookUrl) then
+                    notify("Webhook Rejoin", "URL webhook tidak valid", 4)
+                    return
+                end
+                local was = Rejoin.HookOn
+                Rejoin.HookOn = true
+                Hook.onRejoin("Tes webhook rejoin dari SkyP")
+                Rejoin.HookOn = was
+                notify("Webhook Rejoin", "Pesan tes dikirim", 3)
+            end,
+        })
+    end)
 end)() end
 
 -- ===== TAB: DISCORD =====
@@ -15864,7 +15290,7 @@ do (function()
                 end
                 local was = Hook.On
                 Hook.On = true
-                Hook.send("test", "Tes notifikasi dari K. NEAR")
+                Hook.send("test", "Tes notifikasi dari SkyP")
                 Hook.On = was
                 notify("Discord", "Pesan tes masuk antrian", 3)
             end,
@@ -15906,7 +15332,7 @@ do
     task.spawn(function()
         while alive() do
             local ok, err = pcall(UI.runJobs)
-            if not ok then warn("[K. NEAR] UI runner: " .. tostring(err)) end
+            if not ok then warn("[SkyP] UI runner: " .. tostring(err)) end
             task.wait(0.1)
         end
     end)
@@ -16187,7 +15613,7 @@ do (function()
 
     local function reportText()
         local parts = {
-            "== K. NEAR Observasi ==",
+            "== SkyP Observasi ==",
             "-- Ringkasan --", summaryText(),
             "-- Peringatan --", warningText(),
             "-- Sistem --", systemText(),
@@ -16432,7 +15858,7 @@ do (function()
 end)() end
 
 task.spawn(function()
-    reconnect("K. NEAR v1.3")
+    reconnect("SkyP v1.3")
     -- Penjaga dari config dinyalakan setelah data pemain ketemu
     -- (supaya pemain yang sudah ada dicatat dulu)
     if Config.saved("Penjaga", "On") == true and alive() then
