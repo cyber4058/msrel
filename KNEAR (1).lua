@@ -6737,12 +6737,12 @@ do (function()
         Drop = true, DropAt = 150, DropN = 100, Keep = 0,
         Placed = 0, Broken = 0, Planted = 0, Harvested = 0, Dropped = 0, Collected = 0,
         DropBackoff = 0, Skip = {},
-        Auto = false, Home = nil, HomeFailUntil = 0, AutoPhase = "-",
+        Auto = false, Home = nil, HomeX = -1, HomeY = -1, HomeFailUntil = 0, AutoPhase = "-", Pending = nil,
     }
     UI.V2 = V2
     Config.add("PabrikV2", V2, {
         "Collect", "CollectR", "PB", "BlockId", "PunchMs", "Plant", "Harvest", "SeedId",
-        "PlantMs", "Tiles", "Drop", "DropAt", "DropN", "Keep", "Auto",
+        "PlantMs", "Tiles", "Drop", "DropAt", "DropN", "Keep", "Auto", "HomeX", "HomeY",
     })
 
     local function say(t) V2.Status = t end
@@ -6757,6 +6757,15 @@ do (function()
         return math.min(V2.CollectR, (State.RemoteReach or 2) + 0.2)
     end
 
+    -- pusat collect: di mode Auto Detect ikut posisi break (Home), selain itu posisi karakter
+    function V2.center()
+        local h = V2.Auto and V2.Home
+        if h then return h.x + 0.5, h.y + 0.5 end
+        local s = playerState()
+        if not s then return nil end
+        return s.x, s.y - 0.475
+    end
+
     local function countTiles()
         local n = 0
         for _ in pairs(V2.Tiles) do n += 1 end
@@ -6767,9 +6776,8 @@ do (function()
     local function collectSweep()
         local list = Drops.list
         if not list then return 0 end
-        local s = playerState()
-        if not s then return 0 end
-        local cx, cy = s.x, s.y - 0.475
+        local cx, cy = V2.center()
+        if not cx then return 0 end
         local R = V2.effR()
         local snap = table.move(list, 1, #list, 1, {})
         local n = 0
@@ -6806,6 +6814,7 @@ do (function()
         local nextC, nextRef = 0, 0
         table.insert(Connections, RunService.Heartbeat:Connect(function()
             if not alive() or not V2.Collect then return end
+            if V2.Running and V2.Auto then return end -- Auto Detect: collect animasi (sentuhan badan)
             local now = os.clock()
             if now < nextC then return end
             nextC = now + 0.12
@@ -6826,6 +6835,15 @@ do (function()
         local id = blockId()
         if not id then say("Pilih block untuk put & break (atau pilih seed)") return false end
         label = label or "di atas kepala"
+        -- MAKSIMAL 1 BLOK: kalau masih ada block sisa yang belum pecah, pecahkan itu dulu (jangan put baru)
+        local pend = V2.Pending
+        if pend then
+            if pend.id == id and tileAt(pend.layer, pend.x, pend.y) == pend.id then
+                x, y = pend.x, pend.y
+            else
+                V2.Pending = nil
+            end
+        end
         local fg = tileAt("fg", x, y)
         if fg == nil then say("Tile " .. label .. " di luar world") return false end
         local it = ItemDB[id]
@@ -6848,15 +6866,25 @@ do (function()
             return false
         end
 
-        local tries = 0
+        V2.Pending = { x = x, y = y, id = id, layer = layer } -- block ini wajib pecah dulu sebelum put lagi
+        local tries, nilN = 0, 0
         while run() and tries < 80 do
             local r = tryBreak(x, y, layer == "bg")
             if r == "broke" then
+                V2.Pending = nil
                 V2.Broken += 1
                 say("Put & break " .. itemName(id) .. " (" .. x .. "," .. y .. ")")
                 return true
             end
-            if r == nil then say("Block " .. label .. " tidak bisa dipecah") return false end
+            if r == nil then
+                nilN += 1 -- data tile kadang telat update setelah put: coba lagi sebentar
+                if tileAt(layer, x, y) ~= id and nilN >= 6 then
+                    V2.Pending = nil
+                    say("Block " .. label .. " tidak bisa dipecah")
+                    return false
+                end
+                if nilN >= 20 then say("Block " .. label .. " tidak bisa dipecah") return false end
+            end
             tries += 1
             task.wait(math.max(V2.PunchMs, 30) / 1000)
         end
@@ -6958,34 +6986,77 @@ do (function()
     --   Ada drop (seed / block / gems) -> diambil dulu, baru lanjut PNB
     --   Block habis -> deteksi pohon siap panen: panen 1 pohon, langsung tanam lagi di pohon itu, lanjut pohon berikut
     --   Semua pohon beres -> balik ke posisi awal, lanjut PNB
-    local function dropsNear()
+    -- Drop yang masih menunggu diambil di sekitar posisi break (yang sudah masuk inventory = hilang dari daftar)
+    local PEND_R = 3.5
+    local function pendingDrops()
         local list = Drops.list
         if not list then return 0 end
-        local s = playerState()
-        if not s then return 0 end
-        local cx, cy = s.x, s.y - 0.475
-        local R = V2.effR()
+        local cx, cy = V2.center()
+        if not cx then return 0 end
         local n = 0
         for _, d in ipairs(list) do
             if type(d) == "table" and type(d.x) == "number" and type(d.y) == "number"
-                and math.abs(d.x - cx) <= R and math.abs(d.y - cy) <= R and (d.n or 0) > 0 then
-                n += 1
+                and math.abs(d.x - cx) <= PEND_R and math.abs(d.y - cy) <= PEND_R
+                and (d.n or 0) > 0 and not d.taking and (d.armed ~= false or d.id == 112) then
+                local room = true
+                if d.id ~= 112 and Refs.Inv then -- inventori penuh: tidak akan terambil, jangan ditunggu
+                    local okr, r = pcall(function() return Refs.Inv:room(d.id) end)
+                    if okr and type(r) == "number" and r <= 0 then room = false end
+                end
+                if room then n += 1 end
             end
         end
         return n
     end
 
-    -- ambil semua drop di sekitar sampai habis (maks ~2 dtk), baru lanjut kerja
-    local function collectWait(run)
+    -- Collect dengan animasi game: badan menyentuh drop (drop terbang ke karakter), lalu balik ke posisi.
+    -- Sisa yang tidak tersentuh diambil lewat remote (dalam jangkauan).
+    local function animCollect(run)
+        local list = Drops.list
+        if not list then return end
+        local px, py = getPlayerTile()
+        local s = playerState()
+        if not (px and s) then return end
+        local tiles, seen = {}, {}
+        for _, d in ipairs(list) do
+            if type(d) == "table" and type(d.x) == "number" and type(d.y) == "number"
+                and (d.n or 0) > 0 and not d.taking and (d.armed ~= false or d.id == 112) then
+                local tx, ty = math.floor(d.x), math.floor(d.y)
+                local k = tx .. "," .. ty
+                if not seen[k] and (ty == py or ty == py - 1) and math.abs(tx - px) <= 3 then
+                    seen[k] = true
+                    tiles[#tiles + 1] = { x = tx, y = ty }
+                end
+            end
+        end
+        if #tiles > 0 and s.grounded and Drops.touchAll and run() then
+            local ok, e = pcall(Drops.touchAll, tiles, px, py)
+            if not ok then warn("[K. NEAR] Pabrik V2 collect: " .. tostring(e)) end
+        end
+        if run() and pendingDrops() > 0 then
+            pcall(collectSweep) -- cadangan: drop yang tidak tersentuh
+            task.wait(0.12)
+        end
+    end
+
+    -- Tunggu berdasarkan DETEKSI (bukan timer tetap):
+    --   1) tunggu drop hasil break muncul (sesuai ping)  2) ambil sampai tidak ada drop tersisa
+    --   (= semua sudah masuk inventory)  3) berhenti kalau tidak ada kemajuan
+    local function collectWait(run, tile)
         if not Drops.list then pcall(findDropRefs) end
         if not Drops.list then return end
-        task.wait(0.15) -- beri waktu drop muncul
+        if tile then pcall(Drops.waitSpawn, { tile }) end
+        local last, stall = nil, 0
         local t0 = os.clock()
-        while run() and os.clock() - t0 < 2 do
-            if dropsNear() <= 0 then break end
-            say("Ambil drop dulu...")
-            pcall(collectSweep)
-            task.wait(0.15)
+        while run() and os.clock() - t0 < 12 do
+            local n = pendingDrops()
+            if n <= 0 then break end -- semua sudah terambil -> lanjut
+            if last and n >= last then stall += 1 else stall = 0 end
+            if stall >= 3 then say("Drop tidak bisa diambil, lanjut") break end
+            last = n
+            say(("Ambil drop (%d)..."):format(n))
+            animCollect(run)
+            task.wait(0.08)
         end
     end
 
@@ -7003,14 +7074,32 @@ do (function()
         return false
     end
 
-    function V2.setHome()
-        local x, y = getPlayerTile()
+    -- posisi break. persist=true -> disimpan sebagai posisi custom (dipakai terus tiap START)
+    function V2.setHome(persist, cx, cy)
+        local x, y = cx, cy
+        if not x then x, y = getPlayerTile() end
         if not x then return false end
         V2.Home = { x = x, y = y, world = Guard.worldName() }
+        if persist then V2.HomeX, V2.HomeY = x, y end
         return true
     end
 
-    -- PNB sisi kiri & kanan; tiap block dipecah, drop diambil dulu
+    function V2.clearHome()
+        V2.Home, V2.HomeX, V2.HomeY = nil, -1, -1
+    end
+
+    -- dipanggil saat START / Auto Detect dinyalakan
+    function V2.initHome()
+        if V2.HomeX >= 0 and V2.HomeY >= 0 then
+            V2.Home = { x = V2.HomeX, y = V2.HomeY, world = Guard.worldName() } -- custom
+        elseif not (V2.Home and V2.Home.world == Guard.worldName()) then
+            V2.setHome(false)
+        end
+        return V2.Home ~= nil
+    end
+
+    -- PNB sisi kiri & kanan, SATU blok per waktu: put -> break -> ambil drop -> baru sisi berikutnya.
+    -- Kalau block gagal pecah, tidak ada put baru (block sisa dipecah dulu di putaran berikutnya).
     local function sidePNB(run)
         local id = blockId()
         if not id then say("Pilih block untuk put & break (atau pilih seed)") return 0 end
@@ -7019,9 +7108,12 @@ do (function()
             if not run() or invCount(id) <= 0 then break end
             local px, py = getPlayerTile()
             if not px then break end
-            if putBreakAt(run, px + dx, py, dx < 0 and "di kiri" or "di kanan") then
+            local tx, ty = px + dx, py
+            if putBreakAt(run, tx, ty, dx < 0 and "di kiri" or "di kanan") then
                 did += 1
-                collectWait(run)
+                collectWait(run, { x = tx, y = ty })
+            elseif V2.Pending then
+                break -- masih ada block belum pecah: jangan put di sisi lain
             end
         end
         return did
@@ -7082,7 +7174,7 @@ do (function()
         say("Auto Detect berjalan")
         while run() do
             local acted = 0
-            if not V2.Home then V2.setHome() end
+            if not V2.Home then V2.initHome() end
             if goHome(run) and run() then
                 collectWait(run) -- drop yang ada diambil dulu sebelum apa pun
                 local id = blockId()
@@ -7140,9 +7232,7 @@ do (function()
         end
         if Pabrik.Running and Pabrik.stop then Pabrik.stop("Dihentikan karena Pabrik V2 dimulai") end
         if State.Running then pcall(stopFarm) end
-        if V2.Auto then
-            if not (V2.Home and V2.Home.world == Guard.worldName()) then V2.setHome() end
-        end
+        if V2.Auto then V2.initHome() end
         V2.RunId += 1
         V2.Running = true
         V2.Skip = {}
@@ -15342,7 +15432,7 @@ do (function()
             Value = V2.Auto,
             Callback = function(on)
                 V2.Auto = on
-                if on and not V2.Home then V2.setHome() end
+                if on then V2.initHome() end
                 if V2.Running then -- ganti mode langsung: restart loop dengan mode baru
                     V2.stop("Ganti mode")
                     task.wait(0.2)
@@ -15356,7 +15446,7 @@ do (function()
             Title = "Tentukan posisi break (posisi sekarang)",
             Desc = "Tempat karakter berdiri saat PNB. Setelah panen/tanam selalu balik ke sini",
             Callback = function()
-                if V2.setHome() then
+                if V2.setHome(true) then
                     notify("Pabrik V2", ("Posisi break: (%d,%d)"):format(V2.Home.x, V2.Home.y), 3)
                 else
                     notify("Pabrik V2", "Kamu belum masuk world", 3)
@@ -15368,7 +15458,27 @@ do (function()
         bAuto:Button({
             Title = "Hapus posisi break",
             Desc = "Posisi awal diambil ulang saat START",
-            Callback = function() V2.Home = nil end,
+            Callback = function() V2.clearHome() end,
+        })
+    end)
+    safe(function()
+        bAuto:Input({
+            Title = "Posisi break custom (X,Y)",
+            Desc = "Ketik koordinat tile, contoh 50,30. Kosong / - = hapus. Collect juga mengikuti posisi ini",
+            Value = (V2.HomeX >= 0) and (V2.HomeX .. "," .. V2.HomeY) or "",
+            Placeholder = "contoh: 50,30",
+            Callback = function(text)
+                local a, b = string.match(tostring(text or ""), "^%s*(%d+)%s*[,; ]%s*(%d+)%s*$")
+                if a then
+                    V2.setHome(true, tonumber(a), tonumber(b))
+                    notify("Pabrik V2", ("Posisi break custom: (%s,%s)"):format(a, b), 3)
+                elseif tostring(text or ""):match("^%s*%-?%s*$") then
+                    V2.clearHome()
+                    notify("Pabrik V2", "Posisi break custom dihapus", 3)
+                else
+                    notify("Pabrik V2", "Format salah, contoh: 50,30", 3)
+                end
+            end,
         })
     end)
 
@@ -15470,7 +15580,7 @@ do (function()
     safe(function()
         bCol:Toggle({
             Title = "Auto collect",
-            Desc = "Ambil drop dalam radius terus-menerus (jalan walau Pabrik V2 mati)",
+            Desc = "Otomatis. Auto Detect: animasi sentuhan badan di sekitar posisi break. Mode biasa: sapu remote dalam radius",
             Value = V2.Collect,
             Callback = function(on) V2.Collect = on end,
         })
@@ -15481,13 +15591,6 @@ do (function()
         Min = 1, Max = 6, Step = 1, Default = V2.CollectR,
         Callback = function(v) V2.CollectR = math.floor(v) end,
     })
-    safe(function()
-        bCol:Button({
-            Title = "Collect sekarang (manual)",
-            Desc = "Sekali sapu semua drop dalam radius",
-            Callback = function() V2.collectNow() end,
-        })
-    end)
 
     -- ---- Drop seed ----
     safe(function()
