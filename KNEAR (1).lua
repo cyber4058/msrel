@@ -1,12 +1,10 @@
 local G = (getgenv and getgenv()) or _G
-for _, key in ipairs({ "__Alfian", "__KzoyzOpus", "__GTFarm" }) do -- versi lama ikut dibersihkan
-    if G[key] and G[key].Cleanup then pcall(G[key].Cleanup) end
-    G[key] = nil
-end
+if G.__KnearHarvest and G.__KnearHarvest.Cleanup then pcall(G.__KnearHarvest.Cleanup) end
+G.__KnearHarvest = nil
 local Session = {}
-G.__Alfian = Session
+G.__KnearHarvest = Session
 local function alive()
-    return G.__Alfian == Session
+    return G.__KnearHarvest == Session
 end
 
 do
@@ -1116,7 +1114,7 @@ local function connectGame()
 end
 
 ---------------------------------------------------------------------
--- PNB (PUT & BREAK)
+-- BAGIAN BERSAMA DARI PNB (jalan + collect drop)
 --   1. Block dipasang di tile target (kiri / kanan / atas) lalu dipecah. Hanya 1 block dalam satu waktu.
 --   2. Item yang muncul setelah block pecah diambil PAKAI KARAKTER (jalan menyentuh item), bukan auto collect.
 --   3. Setelah itu karakter kembali ke posisi break, lanjut PNB.
@@ -1368,61 +1366,277 @@ local function collectAll(run, tile)
     P.Got += math.max(0, before - itemsAround(list, tile))
 end
 
--- Pasang 1 block lalu pecahkan sampai hancur. true = sudah pecah.
-local function pnbTile(run, tx, ty, name)
-    local id = P.BlockId
-    if not id then return false end
+
+---------------------------------------------------------------------
+-- HARVEST
+--   1. Pilih jenis seed (mis. Lava Seed) yang ditanam di world.
+--   2. Script mendeteksi otomatis tanaman mana yang sudah SIAP PANEN.
+--   3. Karakter berjalan ke tanaman siap, memukulnya (panen), lalu ambil drop-nya.
+--   Prinsip aman: kalau status "siap" tidak bisa dipastikan, tanaman TIDAK dipukul
+--   (memukul tanaman yang belum siap bisa menghancurkannya).
+---------------------------------------------------------------------
+local H = {
+    Running = false, RunId = 0,
+    SeedId = nil,
+    Delay = 150,                -- jeda antar pukulan (ms)
+    Harvested = 0, ReadyNow = 0, Total = 0,
+    Det = nil,                  -- hasil deteksi data tanaman
+    Unknown = false,            -- true kalau bentuk data tanaman tidak dikenali
+    Failed = {}, Cool = {},     -- tile yang dilewati sementara
+    GC = {}, SeedCache = {},
+    OnStop = nil, Toast = nil,
+}
+
+local READY_FLAG = { ready = true, grown = true, harvestable = true, mature = true, ripe = true,
+    isready = true, fullygrown = true, canharvest = true, done = true }
+local READY_AT = { readyat = true, ripeat = true, matureat = true, harvestat = true, growsat = true,
+    doneat = true, finishat = true, readytime = true, ripentime = true }
+local PLANT_AT = { plantedat = true, planted = true, plantedtime = true, planttime = true, born = true,
+    startedat = true, start = true, since = true, t = true, at = true, time = true, ts = true }
+
+-- waktu tumbuh item (detik), dibaca dari data item
+function H.growTime(id)
+    local c = H.GC[id]
+    if c ~= nil then return c or nil end
     local it = ItemDB[id]
-    local layer = (it and it.background) and "bg" or "fg"
-    local fg = tileAt("fg", tx, ty)
-    if fg == nil then say("Tile " .. name .. " di luar world") return false end
-    if not canWorkAt(tx, ty) then say("Tile " .. name .. " terkunci / tidak boleh dibangun") return false end
-    local cur = tileAt(layer, tx, ty)
-    if cur == nil then return false end
-    local key = tx .. "," .. ty
-
-    if cur == 0 and (layer == "bg" or fg == 0) then
-        if invCount(id) <= 0 then say("Block " .. itemName(id) .. " habis") return false end
-        sendSetTile(layer, tx, ty, id)
-        if Refs.Inv then pcall(function() Refs.Inv:remove(id, 1) end) end
-        HitCount[key] = nil
-        PlacedAt[key] = os.clock()
-        P.Put += 1
-    elseif cur ~= id then
-        say("Tile " .. name .. " terisi (" .. itemName(cur) .. ")")
-        return false
+    local best = false
+    if type(it) == "table" then
+        pcall(function()
+            for k, v in pairs(it) do
+                if type(v) == "number" and v > 0 then
+                    local n = string.lower(tostring(k))
+                    if string.find(n, "grow", 1, true) or string.find(n, "ripen", 1, true)
+                        or string.find(n, "mature", 1, true) then
+                        best = v
+                        break
+                    end
+                end
+            end
+        end)
+        H.GC[id] = best
     end
-    P.Pending = { x = tx, y = ty, id = id, layer = layer }
+    return best or nil
+end
 
-    local tries, nilN = 0, 0
-    while run() and tries < 80 do
-        local r = tryBreak(tx, ty, layer == "bg")
-        if r == "broke" then
-            P.Pending = nil
-            P.Broke += 1
-            say("Put & break " .. itemName(id) .. " (" .. name .. ")")
-            return true
+-- pilih sumber jam yang paling cocok dengan nilai waktu di data tanaman
+function H.nowFor(v)
+    local srcs = {}
+    pcall(function() srcs[#srcs + 1] = workspace:GetServerTimeNow() end)
+    srcs[#srcs + 1] = os.time()
+    srcs[#srcs + 1] = os.clock()
+    srcs[#srcs + 1] = tick()
+    local best, diff
+    for _, n in ipairs(srcs) do
+        local d = abs(n - v)
+        if not diff or d < diff then best, diff = n, d end
+    end
+    return best
+end
+
+function H.look(t, mode, x, y)
+    local w = Refs.World
+    local ok, e = pcall(function()
+        if mode == "idx" then return t[y * w.w + x]
+        elseif mode == "xy" then return t[x .. "," .. y]
+        elseif mode == "yx" then local r = t[y]; return r and r[x]
+        elseif mode == "xy2" then local r = t[x]; return r and r[y] end
+    end)
+    if ok then return e end
+    return nil
+end
+
+-- Cari tempat game menyimpan data tanaman (tanpa menebak nama): cocokkan tiap tabel di World
+-- dengan posisi tanaman yang nyata ada di peta. Yang cocok paling banyak = data tanaman.
+function H.discover(samples)
+    H.Det = nil
+    H.Unknown = false
+    local w = Refs.World
+    if not w or #samples == 0 then return false end
+    local sm = {}
+    local step = math.max(1, math.floor(#samples / 40))
+    for i = 1, #samples, step do sm[#sm + 1] = samples[i] end
+
+    -- 1) fungsi pengecek "siap" bawaan game (hanya nama yang aman, tidak memanggil fungsi panen)
+    pcall(function()
+        for k, v in pairs(w) do
+            if type(v) == "function" then
+                local n = string.lower(tostring(k))
+                local okName = string.find(n, "ready", 1, true) or string.find(n, "grown", 1, true)
+                    or string.find(n, "ripe", 1, true) or string.find(n, "mature", 1, true)
+                    or (string.find(n, "harvest", 1, true) and string.find(n, "^[cih][ans]") ~= nil)
+                if okName then
+                    for _, variant in ipairs({ "plain", "self" }) do
+                        local f
+                        if variant == "plain" then
+                            f = function(x, y) return v(x, y) end
+                        else
+                            f = function(x, y) return v(w, x, y) end
+                        end
+                        local good = true
+                        for _, t in ipairs(sm) do
+                            local ok, r = pcall(f, t.x, t.y)
+                            if not ok or type(r) ~= "boolean" then good = false break end
+                        end
+                        if good then
+                            H.Det = { mode = "fn", fn = f, name = tostring(k) .. "() [" .. variant .. "]" }
+                            return
+                        end
+                    end
+                end
+            end
         end
-        if r == nil then
-            nilN += 1 -- data tile kadang telat update setelah put
-            if nilN >= 8 then break end
+    end)
+    if H.Det then return true end
+
+    -- 2) tabel data tanaman
+    local cands = {}
+    pcall(function()
+        for k, v in pairs(w) do
+            if type(v) == "table" and k ~= "fg" and k ~= "bg" then
+                cands[#cands + 1] = { name = tostring(k), t = v }
+                if #cands < 200 then
+                    local n = 0
+                    for k2, v2 in pairs(v) do
+                        n += 1
+                        if n > 30 then break end
+                        if type(v2) == "table" and type(k2) == "string" then
+                            cands[#cands + 1] = { name = tostring(k) .. "." .. k2, t = v2 }
+                        end
+                    end
+                end
+            end
         end
-        tries += 1
-        task.wait(math.max(P.PunchMs, 30) / 1000)
+    end)
+    local best, bestScore, bestHits = nil, 0, 0
+    for _, c in ipairs(cands) do
+        local lname = string.lower(c.name)
+        local bonus = (string.find(lname, "plant", 1, true) or string.find(lname, "tree", 1, true)
+            or string.find(lname, "seed", 1, true) or string.find(lname, "grow", 1, true)
+            or string.find(lname, "crop", 1, true)) and 0.5 or 0
+        for _, mode in ipairs({ "idx", "xy", "yx", "xy2" }) do
+            local hits = 0
+            for _, t in ipairs(sm) do
+                local e = H.look(c.t, mode, t.x, t.y)
+                if e ~= nil and e ~= false then hits += 1 end
+            end
+            local score = hits + (hits > 0 and bonus or 0)
+            if score > bestScore then
+                best, bestScore, bestHits = { t = c.t, mode = mode, name = c.name .. " [" .. mode .. "]" }, score, hits
+            end
+        end
+    end
+    if best and bestHits >= math.max(1, math.floor(#sm * 0.6)) then
+        H.Det = best
+        return true
     end
     return false
 end
 
-local function targetList()
-    local t = {}
-    if P.Left then t[#t + 1] = { dx = -1, dy = 0, name = "kiri" } end
-    if P.Right then t[#t + 1] = { dx = 1, dy = 0, name = "kanan" } end
-    if P.Up then t[#t + 1] = { dx = 0, dy = -1, name = "atas" } end
-    return t
+-- true HANYA kalau tanaman terbukti siap panen
+function H.ready(x, y, id)
+    local d = H.Det
+    if not d then return false end
+    if d.mode == "fn" then
+        local ok, r = pcall(d.fn, x, y)
+        return ok and r == true
+    end
+    local e = H.look(d.t, d.mode, x, y)
+    if e == nil then return false end
+    if type(e) == "number" then -- hanya waktu tanam
+        local g = H.growTime(id)
+        if not g then H.Unknown = true return false end
+        return H.nowFor(e) - e >= g
+    end
+    if type(e) ~= "table" then
+        H.Unknown = true
+        return false
+    end
+    local flag, readyAt, plantedAt, growF
+    pcall(function()
+        for k, v in pairs(e) do
+            local n = string.lower(tostring(k))
+            if type(v) == "boolean" and READY_FLAG[n] then
+                flag = v
+            elseif type(v) == "number" then
+                if READY_AT[n] then
+                    readyAt = v
+                elseif PLANT_AT[n] and not plantedAt then
+                    plantedAt = v
+                elseif string.find(n, "grow", 1, true) or string.find(n, "ripen", 1, true) then
+                    growF = v
+                end
+            end
+        end
+    end)
+    if flag ~= nil then return flag end
+    if readyAt then return H.nowFor(readyAt) >= readyAt end
+    if plantedAt then
+        local g = growF or H.growTime(id)
+        if g then return H.nowFor(plantedAt) - plantedAt >= g end
+    end
+    H.Unknown = true
+    return false
 end
 
-local function pnbLoop(run)
-    say("PNB berjalan")
+-- Telusuri world: semua tile fg bertipe seed. filterId = hanya seed itu.
+function H.scan(filterId)
+    local w = Refs.World
+    local out, tally = {}, {}
+    if not w then return out, tally end
+    for y = 0, w.h - 1 do
+        local row = w.fg[y]
+        if row then
+            for x = 0, w.w - 1 do
+                local id = row[x]
+                if id and id ~= 0 then
+                    local sd = H.SeedCache[id]
+                    if sd == nil then
+                        local it = ItemDB[id]
+                        sd = (type(it) == "table" and it.kind == "seed") or false
+                        if type(it) == "table" then H.SeedCache[id] = sd end
+                    end
+                    if sd then
+                        tally[id] = (tally[id] or 0) + 1
+                        if not filterId or id == filterId then out[#out + 1] = { x = x, y = y, id = id } end
+                    end
+                end
+            end
+        end
+    end
+    return out, tally
+end
+
+function H.reach()
+    local R = 4
+    local hud = Refs.Hud
+    if hud then
+        local ok, v = pcall(function() return hud:punchRange() end)
+        if not (ok and type(v) == "number") then ok, v = pcall(hud.punchRange) end
+        if ok and type(v) == "number" and v > 0 then R = v end
+    end
+    return math.clamp(R, 1, 8) - 0.2
+end
+
+-- Cari titik berdiri terdekat (searah tanaman) yang aman dan bisa menjangkau tanaman
+function H.standX(s, t, R)
+    local by = s.y - 0.475
+    local row = floor(by)
+    local c0 = floor(s.x)
+    local dir = (t.x >= c0) and 1 or -1
+    local span = abs(t.x - c0) + math.ceil(R) + 1
+    local fake = { x = 0, y = s.y }
+    local c = c0
+    for _ = 0, span do
+        if c ~= c0 and not (openAt(c, row) and realSupport(c, row)) then break end
+        fake.x = c + 0.5
+        if stateReaches(fake, t.x, t.y, R) and Move.los(c, row, t.x, t.y) then return c + 0.5 end
+        c += dir
+    end
+    return nil
+end
+
+function H.loop(run)
+    say("Harvest berjalan")
     while run() do
         if not gameReady() then
             say("Belum terhubung ke game, menghubungkan...")
@@ -1431,99 +1645,217 @@ local function pnbLoop(run)
             continue
         end
         if not Drops.list then pcall(findDropRefs) end
-        if not goHome(run) then task.wait(0.5) continue end
+        if not Refs.Punch then
+            say("Fungsi pukul game belum ketemu. Tekan Hubungkan.")
+            task.wait(1.5)
+            continue
+        end
 
-        -- block sisa yang belum pecah wajib dipecah dulu (maksimal 1 block)
-        local pend = P.Pending
-        if pend then
-            if pend.id == P.BlockId and tileAt(pend.layer, pend.x, pend.y) == pend.id then
-                if pnbTile(run, pend.x, pend.y, "sisa") then
-                    Drops.waitSpawn({ { x = pend.x, y = pend.y } })
-                    collectAll(run, { x = pend.x, y = pend.y })
-                    goHome(run)
-                else
-                    task.wait(0.4)
-                end
+        local seeds = H.scan(H.SeedId)
+        H.Total = #seeds
+        if #seeds == 0 then
+            H.ReadyNow = 0
+            say("Tidak ada tanaman " .. itemName(H.SeedId) .. " di world ini")
+            task.wait(1.5)
+            continue
+        end
+        if not H.Det then
+            if not H.discover(seeds) then
+                say("Data tanaman belum dikenali. Tekan 'Diagnosa' lalu kirim hasilnya.")
+                task.wait(2)
                 continue
             end
-            P.Pending = nil
+            if H.Toast then H.Toast("Deteksi tanaman: " .. H.Det.name) end
         end
 
-        local did = 0
-        for _, tg in ipairs(targetList()) do
+        local s = playerState()
+        if not s then say("Karakter tidak ditemukan") task.wait(0.5) continue end
+        local by, now = s.y - 0.475, os.clock()
+
+        local ready = {}
+        for _, t in ipairs(seeds) do
+            local key = t.x .. "," .. t.y
+            local bad = (H.Failed[key] and now < H.Failed[key]) or (H.Cool[key] and now < H.Cool[key])
+            if not bad and H.ready(t.x, t.y, t.id) then ready[#ready + 1] = t end
+        end
+        H.ReadyNow = #ready
+        if #ready == 0 then
+            if H.Unknown then
+                say("Bentuk data tanaman tidak dikenali. Tekan 'Diagnosa' lalu kirim hasilnya.")
+            else
+                say(("Menunggu tanaman siap (%d tanaman)"):format(#seeds))
+            end
+            task.wait(0.8)
+            continue
+        end
+        table.sort(ready, function(a, b)
+            return abs(a.x + 0.5 - s.x) + abs(a.y - by) * 0.5 < abs(b.x + 0.5 - s.x) + abs(b.y - by) * 0.5
+        end)
+
+        local t = ready[1]
+        local key = t.x .. "," .. t.y
+        local R = H.reach()
+        local sx = H.standX(s, t, R)
+        if not sx then
+            H.Failed[key] = now + 20
+            say(("Tanaman (%d,%d) tidak terjangkau, dilewati"):format(t.x, t.y))
+            task.wait()
+            continue
+        end
+
+        local function reaching()
+            local s2 = playerState()
+            return s2 ~= nil and stateReaches(s2, t.x, t.y, R) and Move.los(floor(s2.x), floor(s2.y - 0.475), t.x, t.y)
+        end
+        if not reaching() then
+            say(("Menuju tanaman (%d,%d)"):format(t.x, t.y))
+            walkX(run, sx, 0.2, 5, reaching)
+        end
+        if not run() then break end
+        if not reaching() then
+            H.Failed[key] = os.clock() + 20
+            say(("Gagal mencapai tanaman (%d,%d)"):format(t.x, t.y))
+            continue
+        end
+
+        say(("Panen %s (%d,%d)"):format(itemName(t.id), t.x, t.y))
+        local done = false
+        for i = 1, 25 do
             if not run() then break end
-            if invCount(P.BlockId) <= 0 then break end
-            local tx, ty = P.HomeX + tg.dx, P.HomeY + tg.dy
-            -- JANGAN put block di atas item yang belum terambil (item jadi terhalang block)
-            local clear = true
-            if dropsInTile(tx, ty) > 0 then
-                say("Item belum terambil, collect dulu (" .. tg.name .. ")")
-                collectAll(run, { x = tx, y = ty })
-                if dropsInTile(tx, ty) > 0 then
-                    clear = false
-                    say("Item masih di tile " .. tg.name .. ", dilewati dulu")
-                end
-            end
-            if clear and run() then
-                local ok = pnbTile(run, tx, ty, tg.name)
-                if ok then
-                    did += 1
-                    Drops.waitSpawn({ { x = tx, y = ty } }) -- tunggu item hasil break muncul
-                    collectAll(run, { x = tx, y = ty })      -- ambil SEBELUM block berikutnya
-                    if not goHome(run) then break end
-                elseif P.Pending then
-                    break -- block belum pecah: jangan put di arah lain
-                end
-            end
+            if tileAt("fg", t.x, t.y) ~= t.id then done = true break end
+            if i > 1 and not H.ready(t.x, t.y, t.id) then done = true break end
+            local ok, err = pcall(Refs.Punch, t.x, t.y, State.MutePunch or nil, nil)
+            if not ok then say("Error pukul: " .. tostring(err)) break end
+            if State.Visual then Anim.swing(t.x, t.y, "punch") end
+            task.wait(math.max(H.Delay, 30) / 1000)
         end
 
-        if run() and invCount(P.BlockId) <= 0 and not P.Pending then
-            collectAll(run, nil) -- item hasil break bisa berisi block lagi
-            goHome(run)
-            if invCount(P.BlockId) <= 0 then
-                say("Block habis, PNB berhenti")
-                return
-            end
+        if done then
+            H.Harvested += 1
+            Drops.brokeAt[key] = os.clock()
+            H.Cool[key] = os.clock() + 1.5
+            Drops.waitSpawn({ { x = t.x, y = t.y } })
+            local px, py = getPlayerTile()
+            if px then P.HomeX, P.HomeY = px, py end
+            collectAll(run, { x = t.x, y = t.y })
+        elseif run() then
+            H.Failed[key] = os.clock() + 20
         end
-        task.wait(did > 0 and 0.03 or 0.3)
+        task.wait(0.03)
     end
 end
 
-function P.start()
-    if P.Running then return true end
+function H.start()
+    if H.Running then return true end
     if not gameReady() then return false, "Belum terhubung ke game. Tekan Hubungkan." end
-    if not P.BlockId then return false, "Pilih block dulu" end
-    if not (P.Left or P.Right or P.Up) then return false, "Pilih minimal satu arah break" end
-    local px, py = getPlayerTile()
-    if not px then return false, "Karakter tidak ditemukan (belum masuk world?)" end
-    if not P.HomeX then P.HomeX, P.HomeY = px, py end
-    P.Running = true
-    P.RunId += 1
-    P.Pending = nil
-    local id = P.RunId
+    if not H.SeedId then return false, "Pilih seed dulu" end
+    if not Refs.Punch then return false, "Fungsi pukul game belum ketemu. Tekan Hubungkan." end
+    if not getPlayerTile() then return false, "Karakter tidak ditemukan (belum masuk world?)" end
+    H.Running = true
+    H.RunId += 1
+    table.clear(H.Failed)
+    table.clear(H.Cool)
+    local id = H.RunId
     task.spawn(function()
-        local ok, err = pcall(pnbLoop, function() return P.Running and P.RunId == id and alive() end)
-        if not ok then say("Error: " .. tostring(err)) warn("[K. NEAR] PNB: " .. tostring(err)) end
-        if P.RunId == id then
-            P.Running = false
+        local ok, err = pcall(H.loop, function() return H.Running and H.RunId == id and alive() end)
+        if not ok then say("Error: " .. tostring(err)) warn("[K. NEAR] HARVEST: " .. tostring(err)) end
+        if H.RunId == id then
+            H.Running = false
             releaseInput()
             AutoInput.active = false
-            if P.OnStop then pcall(P.OnStop) end
+            if H.OnStop then pcall(H.OnStop) end
         end
     end)
     return true
 end
 
-function P.stop(reason)
-    if not P.Running then return end
-    P.Running = false
-    P.RunId += 1
+function H.stop(reason)
+    if not H.Running then return end
+    H.Running = false
+    H.RunId += 1
     releaseInput()
     AutoInput.active = false
     say(reason or "Berhenti")
-    if P.OnStop then pcall(P.OnStop) end
+    if H.OnStop then pcall(H.OnStop) end
 end
 
+---------------------------------------------------------------------
+-- DIAGNOSA: simpan struktur data world/tanaman ke file + clipboard
+---------------------------------------------------------------------
+function H.dump(v, depth, maxn)
+    depth = depth or 1
+    maxn = maxn or 14
+    if type(v) ~= "table" then return tostring(v) end
+    if depth <= 0 then return "{...}" end
+    local parts, n = {}, 0
+    pcall(function()
+        for k, x in pairs(v) do
+            n += 1
+            if n > maxn then parts[#parts + 1] = "..." break end
+            local val
+            if type(x) == "table" then val = H.dump(x, depth - 1, 6)
+            elseif type(x) == "string" then val = '"' .. x .. '"'
+            else val = tostring(x) .. "(" .. type(x) .. ")" end
+            parts[#parts + 1] = tostring(k) .. "=" .. val
+        end
+    end)
+    return "{" .. table.concat(parts, ", ") .. "}"
+end
+
+function H.diagnose()
+    local out = {}
+    local function add(s) out[#out + 1] = s end
+    add("== K NEAR HARVEST DIAGNOSA ==")
+    add("resolver: " .. tostring(Session.ResolveReport))
+    add("Refs: World=" .. tostring(Refs.World ~= nil) .. " Inv=" .. tostring(Refs.Inv ~= nil)
+        .. " Punch=" .. tostring(Refs.Punch ~= nil) .. " Hud=" .. tostring(Refs.Hud ~= nil)
+        .. " State=" .. tostring(Refs.State ~= nil))
+    local w = Refs.World
+    if not w then add("World belum terhubung") return table.concat(out, "\n") end
+    add(("world %dx%d"):format(w.w, w.h))
+    local pr = H.reach()
+    add("punchRange (terpakai): " .. tostring(pr))
+    pcall(function()
+        add(("waktu: server=%s os.time=%s os.clock=%s"):format(
+            tostring(workspace:GetServerTimeNow()), tostring(os.time()), tostring(os.clock())))
+    end)
+    add("")
+    add("-- isi World --")
+    pcall(function()
+        for k, v in pairs(w) do
+            local tv = type(v)
+            if tv == "table" then
+                local c = 0
+                pcall(function() for _ in pairs(v) do c += 1 if c > 5000 then break end end end)
+                add(("[table] %s (%d entri)  contoh: %s"):format(tostring(k), c, H.dump(v, 1, 3)))
+            elseif tv == "function" then
+                add("[function] " .. tostring(k))
+            else
+                add(("[%s] %s = %s"):format(tv, tostring(k), tostring(v)))
+            end
+        end
+    end)
+    add("")
+    local seeds, tally = H.scan(nil)
+    add("-- seed di world --")
+    for id, n in pairs(tally) do add(("%s [%d] x%d"):format(itemName(id), id, n)) end
+    if #seeds > 0 then
+        if not H.Det then H.discover(seeds) end
+        add("")
+        add("deteksi: " .. (H.Det and H.Det.name or "TIDAK KETEMU"))
+        add("-- contoh 4 tanaman --")
+        for i = 1, math.min(4, #seeds) do
+            local t = seeds[i]
+            add(("tanaman %d: (%d,%d) id=%d %s"):format(i, t.x, t.y, t.id, itemName(t.id)))
+            if i == 1 then add("  data item: " .. H.dump(ItemDB[t.id], 1, 40)) end
+            if H.Det and H.Det.mode ~= "fn" then
+                add("  data tanaman: " .. H.dump(H.look(H.Det.t, H.Det.mode, t.x, t.y), 2, 20))
+            end
+            add("  siap? " .. tostring(H.ready(t.x, t.y, t.id)))
+        end
+    end
+    return table.concat(out, "\n")
+end
 
 ---------------------------------------------------------------------
 -- GUI: putih bersih, menu fitur di sisi kanan, on/off pakai kotak centang
@@ -1586,7 +1918,7 @@ end
 
 -- ScreenGui
 local guiParent = (gethui and gethui()) or game:GetService("CoreGui")
-local Gui = mk("ScreenGui", { Name = "KNEAR_PNB", ResetOnSpawn = false, DisplayOrder = 100,
+local Gui = mk("ScreenGui", { Name = "KNEAR_HARVEST", ResetOnSpawn = false, DisplayOrder = 100,
     IgnoreGuiInset = true, ZIndexBehavior = Enum.ZIndexBehavior.Sibling })
 if syn and syn.protect_gui then pcall(syn.protect_gui, Gui) end
 if not pcall(function() Gui.Parent = guiParent end) or not Gui.Parent then Gui.Parent = PlayerGui end
@@ -1629,7 +1961,7 @@ local LogoImg = mk("ImageLabel", { Size = UDim2.fromScale(1, 1), BackgroundTrans
     ScaleType = Enum.ScaleType.Crop, Visible = false, BorderSizePixel = 0 }, Logo)
 corner(LogoImg, 10)
 label(Header, { Position = UDim2.fromOffset(64, 11), Size = UDim2.fromOffset(160, 22), Text = "K NEAR", Font = FB, TextSize = 18 })
-label(Header, { Position = UDim2.fromOffset(64, 32), Size = UDim2.fromOffset(180, 18), Text = "Put & Break otomatis", TextSize = 12, TextColor3 = C.sub })
+label(Header, { Position = UDim2.fromOffset(64, 32), Size = UDim2.fromOffset(180, 18), Text = "Harvest otomatis", TextSize = 12, TextColor3 = C.sub })
 
 local CloseBtn = button(Header, "X", { Size = UDim2.fromOffset(32, 32), Position = UDim2.new(1, -44, 0, 14), TextSize = 13 })
 local MinBtn = button(Header, "-", { Size = UDim2.fromOffset(32, 32), Position = UDim2.new(1, -82, 0, 14), TextSize = 18 })
@@ -1738,147 +2070,103 @@ local function field(parent, placeholder, text, props)
 end
 
 ---------------------------------------------------------------------
--- HALAMAN PNB
+-- HALAMAN HARVEST
 ---------------------------------------------------------------------
-menuItem("pnb", "PNB")
+menuItem("harvest", "HARVEST")
 menuItem("info", "Info")
-local PagePNB = newPage("pnb")
+local PageH = newPage("harvest")
 local PageInfo = newPage("info")
 
--- 1) Fitur on/off
-local cMain = card(PagePNB)
+-- 1) On / off
+local cMain = card(PageH)
 local cbRun
-cbRun = checkbox(cMain, "Aktifkan PNB", "Put & break otomatis, item diambil sebelum block berikutnya", false, function(on)
+cbRun = checkbox(cMain, "Aktifkan Harvest", "Otomatis mendeteksi & memanen tanaman yang sudah siap", false, function(on)
     if on then
-        local ok, err = P.start()
+        local ok, err = H.start()
         if not ok then
             toast(err or "Gagal mulai")
             cbRun.set(false, true)
         end
     else
-        P.stop("Dimatikan")
+        H.stop("Dimatikan")
     end
 end)
-P.OnStop = function() cbRun.set(false, true) end
+H.OnStop = function() cbRun.set(false, true) end
+H.Toast = toast
 
--- 2) Block
-local cBlock = card(PagePNB, "Block yang di-break", "Pilih block dari inventori")
-local blockTop = mk("Frame", { Size = UDim2.new(1, 0, 0, 38), BackgroundTransparency = 1 }, cBlock)
+-- 2) Pilih seed
+local cSeed = card(PageH, "Seed yang dipanen", "Pilih jenis seed yang ditanam di world (contoh: Lava Seed)")
+local seedTop = mk("Frame", { Size = UDim2.new(1, 0, 0, 38), BackgroundTransparency = 1 }, cSeed)
 local selBtn = mk("TextButton", { Size = UDim2.new(1, -96, 1, 0), BackgroundColor3 = C.field, AutoButtonColor = false,
-    Text = "", BorderSizePixel = 0 }, blockTop)
+    Text = "", BorderSizePixel = 0 }, seedTop)
 corner(selBtn, 10)
-local selText = label(selBtn, { Position = UDim2.fromOffset(12, 0), Size = UDim2.new(1, -70, 1, 0), Text = "Pilih block...", Font = FM, TextSize = 13 })
+local selText = label(selBtn, { Position = UDim2.fromOffset(12, 0), Size = UDim2.new(1, -70, 1, 0), Text = "Pilih seed...", Font = FM, TextSize = 13 })
 label(selBtn, { AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, -12, 0, 0), Size = UDim2.fromOffset(50, 38), Text = "Ubah",
     Font = FM, TextSize = 12, TextColor3 = C.accent, TextXAlignment = Enum.TextXAlignment.Right })
-local refreshBtn = button(blockTop, "Muat ulang", { Size = UDim2.fromOffset(88, 38), AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, 0, 0, 0), TextSize = 12 })
-local blockList = mk("ScrollingFrame", { Size = UDim2.new(1, 0, 0, 150), BackgroundColor3 = C.field, BorderSizePixel = 0,
+local scanBtn = button(seedTop, "Pindai", { Size = UDim2.fromOffset(88, 38), AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, 0, 0, 0), TextSize = 12 })
+local seedList = mk("ScrollingFrame", { Size = UDim2.new(1, 0, 0, 150), BackgroundColor3 = C.field, BorderSizePixel = 0,
     ScrollBarThickness = 3, ScrollBarImageColor3 = C.line, CanvasSize = UDim2.new(), AutomaticCanvasSize = Enum.AutomaticSize.Y,
-    Visible = false }, cBlock)
-corner(blockList, 10)
-pad(blockList, 6, 6)
-list(blockList, 4)
+    Visible = false }, cSeed)
+corner(seedList, 10)
+pad(seedList, 6, 6)
+list(seedList, 4)
 
-local function blockLabel(id)
-    return string.format("%s   x%d", itemName(id), invCount(id))
+local seedCounts = {}
+local function seedLabel(id)
+    return string.format("%s   x%d tanaman", itemName(id), seedCounts[id] or 0)
 end
-local function setBlock(id)
-    P.BlockId = id
-    selText.Text = id and blockLabel(id) or "Pilih block..."
+local function setSeed(id)
+    H.SeedId = id
+    table.clear(H.Failed)
+    table.clear(H.Cool)
+    selText.Text = id and seedLabel(id) or "Pilih seed..."
     selText.TextColor3 = id and C.text or C.sub
 end
-local function populateBlocks()
-    for _, ch in ipairs(blockList:GetChildren()) do
+local function populateSeeds()
+    for _, ch in ipairs(seedList:GetChildren()) do
         if ch:IsA("TextButton") or ch:IsA("TextLabel") then ch:Destroy() end
     end
+    seedCounts = {}
+    if gameReady() then
+        local ok, _, tally = pcall(H.scan, nil)
+        if ok and type(tally) == "table" then seedCounts = tally end
+    end
     local ids = {}
-    pcall(function() ids = placeableIds() end)
+    for id in pairs(seedCounts) do ids[#ids + 1] = id end
+    table.sort(ids)
     if #ids == 0 then
-        label(blockList, { Size = UDim2.new(1, 0, 0, 30), Text = gameReady() and "Inventori kosong" or "Belum terhubung ke game",
+        label(seedList, { Size = UDim2.new(1, 0, 0, 30), Text = gameReady() and "Tidak ada seed tertanam di world ini" or "Belum terhubung ke game",
             TextColor3 = C.sub, TextSize = 13, TextXAlignment = Enum.TextXAlignment.Center })
     end
     for _, id in ipairs(ids) do
-        local b = mk("TextButton", { Size = UDim2.new(1, 0, 0, 32), BackgroundColor3 = (id == P.BlockId) and C.accentSoft or C.bg,
-            AutoButtonColor = false, Text = "", BorderSizePixel = 0 }, blockList)
+        local b = mk("TextButton", { Size = UDim2.new(1, 0, 0, 32), BackgroundColor3 = (id == H.SeedId) and C.accentSoft or C.bg,
+            AutoButtonColor = false, Text = "", BorderSizePixel = 0 }, seedList)
         corner(b, 8)
-        label(b, { Position = UDim2.fromOffset(10, 0), Size = UDim2.new(1, -20, 1, 0), Text = blockLabel(id), Font = FM, TextSize = 13,
-            TextColor3 = (id == P.BlockId) and C.accent or C.text })
+        label(b, { Position = UDim2.fromOffset(10, 0), Size = UDim2.new(1, -20, 1, 0), Text = seedLabel(id), Font = FM, TextSize = 13,
+            TextColor3 = (id == H.SeedId) and C.accent or C.text })
         b.MouseButton1Click:Connect(function()
-            setBlock(id)
-            blockList.Visible = false
+            setSeed(id)
+            seedList.Visible = false
         end)
     end
 end
 selBtn.MouseButton1Click:Connect(function()
-    if not blockList.Visible then populateBlocks() end
-    blockList.Visible = not blockList.Visible
+    if not seedList.Visible then populateSeeds() end
+    seedList.Visible = not seedList.Visible
 end)
-refreshBtn.MouseButton1Click:Connect(function()
+scanBtn.MouseButton1Click:Connect(function()
     task.spawn(function()
         if not gameReady() then connectGame() end
-        populateBlocks()
-        if P.BlockId then setBlock(P.BlockId) end
-        blockList.Visible = true
+        populateSeeds()
+        if H.SeedId then setSeed(H.SeedId) end
+        seedList.Visible = true
     end)
 end)
 
--- 3) Posisi & arah break
-local cPos = card(PagePNB, "Posisi break", "Tempat karakter berdiri saat PNB")
-local posLabel = label(cPos, { Size = UDim2.new(1, 0, 0, 20), Text = "Belum ditentukan (otomatis posisi saat mulai)", TextSize = 13, TextColor3 = C.sub })
-local posRow = mk("Frame", { Size = UDim2.new(1, 0, 0, 38), BackgroundTransparency = 1 }, cPos)
-local setHereBtn = button(posRow, "Set di posisi saya", { Size = UDim2.new(0.5, -4, 1, 0) }, true)
-local clearPosBtn = button(posRow, "Hapus posisi", { Size = UDim2.new(0.5, -4, 1, 0), AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, 0, 0, 0) })
-local xyRow = mk("Frame", { Size = UDim2.new(1, 0, 0, 38), BackgroundTransparency = 1 }, cPos)
-local xyBox = field(xyRow, "Custom X,Y  (contoh 50,30)", "", { Size = UDim2.new(1, -96, 1, 0) })
-local xyBtn = button(xyRow, "Terapkan", { Size = UDim2.fromOffset(88, 38), AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, 0, 0, 0) })
-
-local function updatePosLabel()
-    if P.HomeX then
-        posLabel.Text = ("Posisi break:  X %d,  Y %d"):format(P.HomeX, P.HomeY or 0)
-        posLabel.TextColor3 = C.text
-    else
-        posLabel.Text = "Belum ditentukan (otomatis posisi saat mulai)"
-        posLabel.TextColor3 = C.sub
-    end
-end
-setHereBtn.MouseButton1Click:Connect(function()
-    local x, y = getPlayerTile()
-    if not x then toast("Karakter tidak ditemukan") return end
-    P.HomeX, P.HomeY = x, y
-    updatePosLabel()
-    toast(("Posisi break: %d,%d"):format(x, y))
-end)
-clearPosBtn.MouseButton1Click:Connect(function()
-    P.HomeX, P.HomeY = nil, nil
-    xyBox.Text = ""
-    updatePosLabel()
-end)
-xyBtn.MouseButton1Click:Connect(function()
-    local a, b = string.match(xyBox.Text, "^%s*(%d+)%s*[,; ]%s*(%d+)%s*$")
-    if not a then toast("Format salah, contoh: 50,30") return end
-    P.HomeX, P.HomeY = tonumber(a), tonumber(b)
-    updatePosLabel()
-    toast(("Posisi break: %s,%s"):format(a, b))
-end)
-
-label(cPos, { Size = UDim2.new(1, 0, 0, 20), Text = "Arah break  (x = block, P = karakter)", Font = FM, TextSize = 13 })
-local preview = label(cPos, { Size = UDim2.new(1, 0, 0, 44), Text = "", Font = Enum.Font.Code, TextSize = 16,
-    TextColor3 = C.accent, TextXAlignment = Enum.TextXAlignment.Center, TextYAlignment = Enum.TextYAlignment.Center })
-local function updatePreview()
-    local l = P.Left and "x" or "."
-    local r = P.Right and "x" or "."
-    local u = P.Up and "x" or "."
-    preview.Text = ("    %s\n%s P %s"):format(u, l, r)
-end
-local dirRow = mk("Frame", { Size = UDim2.new(1, 0, 0, 28), BackgroundTransparency = 1 }, cPos)
-list(dirRow, 6, Enum.FillDirection.Horizontal)
-checkbox(dirRow, "Kiri", nil, P.Left, function(v) P.Left = v updatePreview() end, 0.32)
-checkbox(dirRow, "Kanan", nil, P.Right, function(v) P.Right = v updatePreview() end, 0.32)
-checkbox(dirRow, "Atas", nil, P.Up, function(v) P.Up = v updatePreview() end, 0.32)
-
--- 4) Pengaturan
-local cSet = card(PagePNB, "Pengaturan")
-checkbox(cSet, "Auto collect cepat", "Ambil item di tile PNB & radius sebelum block berikutnya dipasang", P.Fast, function(v) P.Fast = v end)
-checkbox(cSet, "Ambil item pakai karakter", "Cadangan: karakter jalan ke item yang tidak terjangkau", P.Collect, function(v) P.Collect = v end)
+-- 3) Pengaturan
+local cSet = card(PageH, "Pengaturan")
+checkbox(cSet, "Auto collect cepat", "Ambil drop panen langsung (remote) sebelum lanjut", P.Fast, function(v) P.Fast = v end)
+checkbox(cSet, "Ambil item pakai karakter", "Cadangan: karakter jalan ke drop yang tidak terjangkau", P.Collect, function(v) P.Collect = v end)
 local radRow = mk("Frame", { Size = UDim2.new(1, 0, 0, 36), BackgroundTransparency = 1 }, cSet)
 label(radRow, { Size = UDim2.new(1, -110, 1, 0), Text = "Radius collect (tile)", Font = FM, TextSize = 14 })
 local radBox = field(radRow, "3", tostring(P.Radius), { Size = UDim2.fromOffset(100, 36), AnchorPoint = Vector2.new(1, 0),
@@ -1888,21 +2176,22 @@ radBox.FocusLost:Connect(function()
     P.Radius = math.clamp(math.floor(n or P.Radius), 1, 5)
     radBox.Text = tostring(P.Radius)
 end)
-checkbox(cSet, "Animasi tangan", "Tampilan memukul / memasang block", State.Visual, function(v) State.Visual = v end)
+checkbox(cSet, "Animasi tangan", "Tampilan memukul tanaman", State.Visual, function(v) State.Visual = v end)
 local delayRow = mk("Frame", { Size = UDim2.new(1, 0, 0, 36), BackgroundTransparency = 1 }, cSet)
 label(delayRow, { Size = UDim2.new(1, -110, 1, 0), Text = "Jeda pukul (ms)", Font = FM, TextSize = 14 })
-local delayBox = field(delayRow, "120", tostring(P.PunchMs), { Size = UDim2.fromOffset(100, 36), AnchorPoint = Vector2.new(1, 0),
+local delayBox = field(delayRow, "150", tostring(H.Delay), { Size = UDim2.fromOffset(100, 36), AnchorPoint = Vector2.new(1, 0),
     Position = UDim2.new(1, 0, 0, 0), TextXAlignment = Enum.TextXAlignment.Center })
 delayBox.FocusLost:Connect(function()
     local n = tonumber(delayBox.Text)
-    P.PunchMs = math.clamp(math.floor(n or P.PunchMs), 40, 1000)
-    delayBox.Text = tostring(P.PunchMs)
+    H.Delay = math.clamp(math.floor(n or H.Delay), 60, 1000)
+    delayBox.Text = tostring(H.Delay)
 end)
 
--- 5) Status
-local cStat = card(PagePNB, "Status")
+-- 4) Status
+local cStat = card(PageH, "Status")
 local statLabel = label(cStat, { Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y, Text = "Siap", TextWrapped = true, TextSize = 13, Font = FM })
 local numLabel = label(cStat, { Size = UDim2.new(1, 0, 0, 18), Text = "", TextSize = 12, TextColor3 = C.sub })
+local detLabel = label(cStat, { Size = UDim2.new(1, 0, 0, 18), Text = "", TextSize = 12, TextColor3 = C.sub })
 local connRow = mk("Frame", { Size = UDim2.new(1, 0, 0, 36), BackgroundTransparency = 1 }, cStat)
 local connLabel = label(connRow, { Size = UDim2.new(1, -120, 1, 0), Text = "", Font = FM, TextSize = 13 })
 local connBtn = button(connRow, "Hubungkan", { Size = UDim2.fromOffset(110, 36), AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, 0, 0, 0) })
@@ -1911,16 +2200,27 @@ connBtn.MouseButton1Click:Connect(function()
     task.spawn(function()
         local ok = connectGame()
         toast(ok and "Terhubung ke game" or "Gagal, pastikan sudah masuk world")
-        populateBlocks()
+        populateSeeds()
+    end)
+end)
+local diagBtn = button(cStat, "Diagnosa (salin ke clipboard)", { Size = UDim2.new(1, 0, 0, 38) })
+diagBtn.MouseButton1Click:Connect(function()
+    task.spawn(function()
+        local ok, text = pcall(H.diagnose)
+        if not ok then toast("Diagnosa gagal: " .. tostring(text)) return end
+        pcall(function() writefile("knear_harvest_diag.txt", text) end)
+        local copied = pcall(function() setclipboard(text) end)
+        print(text)
+        toast(copied and "Diagnosa disalin ke clipboard" or "Diagnosa dicetak di console (F9)")
     end)
 end)
 
 ---------------------------------------------------------------------
 -- HALAMAN INFO
 ---------------------------------------------------------------------
-local cAbout = card(PageInfo, "K NEAR", "PNB - Put & Break")
+local cAbout = card(PageInfo, "K NEAR", "HARVEST - Panen otomatis")
 label(cAbout, { Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y, TextWrapped = true, TextSize = 13, TextColor3 = C.sub,
-    Text = "Pilih block, tentukan posisi break, lalu aktifkan PNB. Item yang muncul diambil dulu (collect cepat / karakter), baru block berikutnya dipasang." })
+    Text = "Pilih jenis seed yang ditanam, lalu aktifkan. Script mendeteksi tanaman yang sudah siap, berjalan ke sana, memanen, dan mengambil drop-nya. Tanaman yang belum siap tidak disentuh." })
 local cDc = card(PageInfo, "Komunitas")
 label(cDc, { Size = UDim2.new(1, 0, 0, 18), Text = DISCORD_URL, TextSize = 13, TextColor3 = C.accent, Font = FM })
 local copyDc = button(cDc, "Salin link Discord", { Size = UDim2.new(1, 0, 0, 38) }, true)
@@ -1932,12 +2232,10 @@ copyDc.MouseButton1Click:Connect(copyDiscord)
 DcBtn.MouseButton1Click:Connect(copyDiscord)
 local cKey = card(PageInfo, "Tombol")
 label(cKey, { Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y, TextWrapped = true, TextSize = 13, TextColor3 = C.sub,
-    Text = "RightShift = sembunyikan / tampilkan menu.\nTombol - = kecilkan menu jadi logo." })
+    Text = "RightCtrl = sembunyikan / tampilkan menu.\nTombol - = kecilkan menu jadi logo." })
 
-showPage("pnb")
-updatePreview()
-updatePosLabel()
-setBlock(nil)
+showPage("harvest")
+setSeed(nil)
 
 ---------------------------------------------------------------------
 -- Minimize / close / drag / tombol RightShift
@@ -1958,7 +2256,7 @@ Mini.MouseButton1Click:Connect(function() setHidden(false) end)
 
 table.insert(Connections, UserInputService.InputBegan:Connect(function(input, gp)
     if gp then return end
-    if input.KeyCode == Enum.KeyCode.RightShift then setHidden(Main.Visible) end
+    if input.KeyCode == Enum.KeyCode.RightControl then setHidden(Main.Visible) end
 end))
 
 do
@@ -1999,6 +2297,8 @@ task.spawn(function()
     end
 end)
 
+
+
 ---------------------------------------------------------------------
 -- Pembaruan tampilan berkala
 ---------------------------------------------------------------------
@@ -2009,11 +2309,12 @@ do
         if now - last < 0.2 or not alive() then return end
         last = now
         statLabel.Text = P.Status
-        numLabel.Text = ("Put %d   |   Break %d   |   Item diambil %d"):format(P.Put, P.Broke, P.Got)
+        numLabel.Text = ("Tanaman %d   |   Siap %d   |   Dipanen %d"):format(H.Total, H.ReadyNow, H.Harvested)
+        detLabel.Text = H.Det and ("Deteksi: " .. H.Det.name) or "Deteksi: belum (otomatis saat dimulai)"
         local ok = gameReady()
         connLabel.Text = ok and "Terhubung ke game" or "Belum terhubung"
         connLabel.TextColor3 = ok and C.ok or C.bad
-        if P.BlockId and not blockList.Visible then selText.Text = blockLabel(P.BlockId) end
+        if H.SeedId and not seedList.Visible then selText.Text = seedLabel(H.SeedId) end
     end))
 end
 
@@ -2021,13 +2322,12 @@ local function destroyGui()
     pcall(function() Gui:Destroy() end)
 end
 
-
 ---------------------------------------------------------------------
 -- INIT & CLEANUP
 ---------------------------------------------------------------------
 Session.Cleanup = function()
-    P.Running = false
-    P.RunId += 1
+    H.Running = false
+    H.RunId += 1
     AutoInput.active = false
     releaseInput()
     for _, c in ipairs(Connections) do pcall(function() c:Disconnect() end) end
@@ -2039,19 +2339,18 @@ end
 
 CloseBtn.MouseButton1Click:Connect(function()
     Session.Cleanup()
-    G.__Alfian = nil
+    G.__KnearHarvest = nil
 end)
 
 task.spawn(function()
-    -- cari data game; kalau belum masuk world, coba lagi sampai ketemu
     for _ = 1, 20 do
         if not alive() then return end
-        local ok = pcall(connectGame)
+        pcall(connectGame)
         if gameReady() then break end
         task.wait(3)
     end
     if alive() then
-        pcall(populateBlocks)
-        toast(gameReady() and "K NEAR siap" or "Belum terhubung. Masuk world lalu tekan Hubungkan")
+        pcall(populateSeeds)
+        toast(gameReady() and "K NEAR HARVEST siap" or "Belum terhubung. Masuk world lalu tekan Hubungkan")
     end
 end)
