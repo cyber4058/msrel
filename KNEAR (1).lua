@@ -1388,7 +1388,8 @@ local H = {
 }
 
 local READY_FLAG = { ready = true, grown = true, harvestable = true, mature = true, ripe = true,
-    isready = true, fullygrown = true, canharvest = true, done = true }
+    isready = true, fullygrown = true, canharvest = true, done = true,
+    fruit = true, hasfruit = true, fruiting = true }
 local READY_AT = { readyat = true, ripeat = true, matureat = true, harvestat = true, growsat = true,
     doneat = true, finishat = true, readytime = true, ripentime = true }
 local PLANT_AT = { plantedat = true, planted = true, plantedtime = true, planttime = true, born = true,
@@ -1401,6 +1402,10 @@ function H.growTime(id)
     local it = ItemDB[id]
     local best = false
     if type(it) == "table" then
+        if type(it.grow) == "number" and it.grow > 0 then
+            H.GC[id] = it.grow
+            return it.grow
+        end
         pcall(function()
             for k, v in pairs(it) do
                 if type(v) == "number" and v > 0 then
@@ -1433,13 +1438,63 @@ function H.nowFor(v)
     return best
 end
 
+-- tabel yang dipegang fungsi pohon game (upvalue): tempat data tanaman sebenarnya
+function H.upTables()
+    local w = Refs.World
+    local out, seenF, seenT, queue = {}, {}, {}, {}
+    if not w then return out end
+    for _, n in ipairs({ "treeFruit", "treeLook", "treeNear", "providerReady", "providerStage", "providerInfo", "tileChanged" }) do
+        local ok, f = pcall(function() return w[n] end)
+        if ok and type(f) == "function" then queue[#queue + 1] = { f = f, name = n } end
+    end
+    local i = 1
+    while i <= #queue and i <= 40 do
+        local q = queue[i]
+        i += 1
+        if not seenF[q.f] then
+            seenF[q.f] = true
+            for idx, u in pairs(getUpvalues(q.f)) do
+                if type(u) == "table" then
+                    if u ~= w and u ~= w.fg and u ~= w.bg and u ~= ItemDB and u ~= Refs.Inv and not seenT[u] and #out < 150 then
+                        seenT[u] = true
+                        out[#out + 1] = { name = "up:" .. q.name .. "#" .. idx, t = u }
+                        local n = 0
+                        pcall(function()
+                            for k2, v2 in pairs(u) do
+                                n += 1
+                                if n > 20 then break end
+                                if type(v2) == "table" and type(k2) == "string" and not seenT[v2] then
+                                    seenT[v2] = true
+                                    out[#out + 1] = { name = "up:" .. q.name .. "#" .. idx .. "." .. k2, t = v2 }
+                                end
+                            end
+                        end)
+                    end
+                elseif type(u) == "function" and not seenF[u] then
+                    queue[#queue + 1] = { f = u, name = q.name .. "/f" .. idx }
+                end
+            end
+        end
+    end
+    return out
+end
+
 function H.look(t, mode, x, y)
     local w = Refs.World
     local ok, e = pcall(function()
         if mode == "idx" then return t[y * w.w + x]
         elseif mode == "xy" then return t[x .. "," .. y]
         elseif mode == "yx" then local r = t[y]; return r and r[x]
-        elseif mode == "xy2" then local r = t[x]; return r and r[y] end
+        elseif mode == "xy2" then local r = t[x]; return r and r[y]
+        elseif mode == "list" then
+            for i = 1, math.min(#t, 4000) do
+                local e = t[i]
+                if type(e) == "table" and type(e.x) == "number" and type(e.y) == "number"
+                    and floor(e.x) == x and floor(e.y) == y then
+                    return e
+                end
+            end
+        end
     end)
     if ok then return e end
     return nil
@@ -1509,29 +1564,68 @@ function H.discover(samples)
             end
         end
     end)
+    pcall(function()
+        for _, c in ipairs(H.upTables()) do cands[#cands + 1] = c end
+    end)
+    H.Scores = {}
     local best, bestScore, bestHits = nil, 0, 0
     for _, c in ipairs(cands) do
         local lname = string.lower(c.name)
         local bonus = (string.find(lname, "plant", 1, true) or string.find(lname, "tree", 1, true)
             or string.find(lname, "seed", 1, true) or string.find(lname, "grow", 1, true)
             or string.find(lname, "crop", 1, true)) and 0.5 or 0
-        for _, mode in ipairs({ "idx", "xy", "yx", "xy2" }) do
+        local f1 = rawget(c.t, 1)
+        local isList = type(f1) == "table" and type(rawget(f1, "x")) == "number" and type(rawget(f1, "y")) == "number"
+        for _, mode in ipairs({ "idx", "xy", "yx", "xy2", "list" }) do
+          if mode ~= "list" or isList then
             local hits = 0
             for _, t in ipairs(sm) do
                 local e = H.look(c.t, mode, t.x, t.y)
                 if e ~= nil and e ~= false then hits += 1 end
             end
+            if hits > 0 then H.Scores[#H.Scores + 1] = ("%s [%s] %d/%d"):format(c.name, mode, hits, #sm) end
             local score = hits + (hits > 0 and bonus or 0)
             if score > bestScore then
                 best, bestScore, bestHits = { t = c.t, mode = mode, name = c.name .. " [" .. mode .. "]" }, score, hits
             end
+          end
         end
     end
     if best and bestHits >= math.max(1, math.floor(#sm * 0.6)) then
         H.Det = best
         return true
     end
-    return false
+
+    -- 3) cadangan: treeFruit bawaan game (hasilnya harus bervariasi antar pohon)
+    pcall(function()
+        local f = w.treeFruit
+        if type(f) ~= "function" then return end
+        for _, variant in ipairs({ "plain", "self", "idx" }) do
+            local g
+            if variant == "plain" then
+                g = function(x, y) return f(x, y) end
+            elseif variant == "self" then
+                g = function(x, y) return f(w, x, y) end
+            else
+                g = function(x, y) return f(y * w.w + x) end
+            end
+            local allOk, truthy, falsy = true, 0, 0
+            for _, t in ipairs(sm) do
+                local ok, r = pcall(g, t.x, t.y)
+                if not ok then allOk = false break end
+                if r == true or (type(r) == "number" and r > 0) then truthy += 1 else falsy += 1 end
+            end
+            if allOk and truthy > 0 and falsy > 0 then
+                H.Det = { mode = "fn", name = "treeFruit() [" .. variant .. "]",
+                    fn = function(x, y)
+                        local r = g(x, y)
+                        return r == true or (type(r) == "number" and r > 0)
+                    end }
+                return
+            end
+        end
+    end)
+    return H.Det ~= nil
 end
 
 -- true HANYA kalau tanaman terbukti siap panen
@@ -1560,7 +1654,9 @@ function H.ready(x, y, id)
             if type(v) == "boolean" and READY_FLAG[n] then
                 flag = v
             elseif type(v) == "number" then
-                if READY_AT[n] then
+                if n == "fruit" or n == "fruits" or n == "fruitcount" then
+                    flag = v > 0
+                elseif READY_AT[n] then
                     readyAt = v
                 elseif PLANT_AT[n] and not plantedAt then
                     plantedAt = v
@@ -1745,7 +1841,7 @@ function H.loop(run)
 
         say(("Panen %s (%d,%d)"):format(itemName(t.id), t.x, t.y))
         local done = false
-        for i = 1, 25 do
+        for i = 1, 6 do
             if not run() then break end
             if tileAt("fg", t.x, t.y) ~= t.id then done = true break end
             if i > 1 and not H.ready(t.x, t.y, t.id) then done = true break end
@@ -1922,6 +2018,74 @@ function H.diagnose()
                 add("  data tanaman: " .. H.dump(H.look(H.Det.t, H.Det.mode, t.x, t.y), 2, 20))
             end
             add("  siap? " .. tostring(H.ready(t.x, t.y, t.id)))
+        end
+    end
+
+    -- ====== detail pohon ======
+    if #seeds > 0 then
+        local it = ItemDB[seeds[1].id]
+        add("")
+        add("== DETAIL POHON ==")
+        if type(it) == "table" then
+            add("item.tree = " .. H.dump(it.tree, 3, 30))
+            add("item.seed = " .. H.dump(it.seed, 3, 30))
+        end
+        add("kecocokan tabel (nama [mode] cocok/sampel): " .. ((H.Scores and #H.Scores > 0) and table.concat(H.Scores, " ; ") or "tidak ada"))
+        for _, fname in ipairs({ "treeFruit", "treeLook", "treeNear", "providerStage", "providerReady", "providerInfo" }) do
+            local f = w[fname]
+            if type(f) == "function" then
+                for _, variant in ipairs({ "(x,y)", "(w,x,y)", "(idx)" }) do
+                    local counts, errs, firstErr = {}, 0, nil
+                    for i = 1, math.min(#seeds, 80) do
+                        local tt = seeds[i]
+                        local ok, a, b
+                        if variant == "(x,y)" then ok, a, b = pcall(f, tt.x, tt.y)
+                        elseif variant == "(w,x,y)" then ok, a, b = pcall(f, w, tt.x, tt.y)
+                        else ok, a, b = pcall(f, tt.y * w.w + tt.x) end
+                        if ok then
+                            local k = H.dump(a, 1, 6) .. ((b ~= nil) and (" ; " .. H.dump(b, 1, 6)) or "")
+                            counts[k] = (counts[k] or 0) + 1
+                        else
+                            errs += 1
+                            firstErr = firstErr or tostring(a)
+                        end
+                    end
+                    local parts = {}
+                    for k, n in pairs(counts) do parts[#parts + 1] = k .. " x" .. n end
+                    add(("%s%s: %s%s"):format(fname, variant, table.concat(parts, " | "),
+                        errs > 0 and (" | error x" .. errs .. ": " .. tostring(firstErr)) or ""))
+                end
+                if getconsts then
+                    local ok, cs = pcall(getconsts, f)
+                    if ok and type(cs) == "table" then
+                        local list = {}
+                        for _, c in pairs(cs) do
+                            if (type(c) == "string" or type(c) == "number") and #list < 40 then list[#list + 1] = tostring(c) end
+                        end
+                        add(fname .. " konstanta: " .. table.concat(list, ", "))
+                    end
+                end
+            end
+        end
+        add("")
+        add("-- tabel yang dipegang fungsi pohon (upvalue) --")
+        pcall(function()
+            for _, c in ipairs(H.upTables()) do
+                local n = 0
+                pcall(function() for _ in pairs(c.t) do n += 1 if n > 5000 then break end end end)
+                add(("%s (%d entri): %s"):format(c.name, n, H.dump(c.t, 2, 6)))
+            end
+        end)
+        add("")
+        add("-- placedAt / flips di posisi pohon pertama --")
+        local p1 = seeds[1]
+        for _, nm in ipairs({ "placedAt", "flips" }) do
+            local tb = w[nm]
+            if type(tb) == "table" and type(tb.fg) == "table" then
+                for _, mode in ipairs({ "idx", "xy", "yx", "xy2" }) do
+                    add(("%s.fg [%s] = %s"):format(nm, mode, H.dump(H.look(tb.fg, mode, p1.x, p1.y), 2, 10)))
+                end
+            end
         end
     end
     return table.concat(out, "\n")
