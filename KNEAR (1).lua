@@ -1393,7 +1393,7 @@ local READY_FLAG = { ready = true, grown = true, harvestable = true, mature = tr
 local READY_AT = { readyat = true, ripeat = true, matureat = true, harvestat = true, growsat = true,
     doneat = true, finishat = true, readytime = true, ripentime = true }
 local PLANT_AT = { plantedat = true, planted = true, plantedtime = true, planttime = true, born = true,
-    startedat = true, start = true, since = true, t = true, at = true, time = true, ts = true }
+    startedat = true, start = true, since = true, t = true, at = true, time = true, ts = true, p = true }
 
 -- waktu tumbuh item (detik), dibaca dari data item
 function H.growTime(id)
@@ -1426,7 +1426,10 @@ end
 -- pilih sumber jam yang paling cocok dengan nilai waktu di data tanaman
 function H.nowFor(v)
     local srcs = {}
-    pcall(function() srcs[#srcs + 1] = workspace:GetServerTimeNow() end)
+    local sv
+    pcall(function() sv = workspace:GetServerTimeNow() end)
+    if sv and abs(sv - v) < 3e8 then return sv end
+    if sv then srcs[#srcs + 1] = sv end
     srcs[#srcs + 1] = os.time()
     srcs[#srcs + 1] = os.clock()
     srcs[#srcs + 1] = tick()
@@ -1575,16 +1578,26 @@ function H.discover(samples)
             or string.find(lname, "seed", 1, true) or string.find(lname, "grow", 1, true)
             or string.find(lname, "crop", 1, true)) and 0.5 or 0
         local f1 = rawget(c.t, 1)
+        local r2 = f1 or rawget(c.t, 2)
+        local isItems = type(r2) == "table" and type(rawget(r2, "name")) == "string"
         local isList = type(f1) == "table" and type(rawget(f1, "x")) == "number" and type(rawget(f1, "y")) == "number"
         for _, mode in ipairs({ "idx", "xy", "yx", "xy2", "list" }) do
-          if mode ~= "list" or isList then
+          if not isItems and (mode ~= "list" or isList) then
             local hits = 0
             for _, t in ipairs(sm) do
                 local e = H.look(c.t, mode, t.x, t.y)
                 if e ~= nil and e ~= false then hits += 1 end
             end
             if hits > 0 then H.Scores[#H.Scores + 1] = ("%s [%s] %d/%d"):format(c.name, mode, hits, #sm) end
-            local score = hits + (hits > 0 and bonus or 0)
+            local shape = 0
+            if hits > 0 then
+                for _, t in ipairs(sm) do
+                    local e = H.look(c.t, mode, t.x, t.y)
+                    if type(e) == "table" and type(rawget(e, "p")) == "number" then shape = 1 end
+                    break
+                end
+            end
+            local score = hits + (hits > 0 and (bonus + shape) or 0)
             if score > bestScore then
                 best, bestScore, bestHits = { t = c.t, mode = mode, name = c.name .. " [" .. mode .. "]" }, score, hits
             end
@@ -1670,7 +1683,7 @@ function H.ready(x, y, id)
     if readyAt then return H.nowFor(readyAt) >= readyAt end
     if plantedAt then
         local g = growF or H.growTime(id)
-        if g then return H.nowFor(plantedAt) - plantedAt >= g end
+        if g then return H.nowFor(plantedAt) - plantedAt >= g + 0.3 end
     end
     H.Unknown = true
     return false
@@ -1793,6 +1806,7 @@ function H.loop(run)
         if not s then say("Karakter tidak ditemukan") task.wait(0.5) continue end
         local by, now = s.y - 0.475, os.clock()
 
+        H.Unknown = false
         local ready = {}
         for _, t in ipairs(seeds) do
             local key = t.x .. "," .. t.y
