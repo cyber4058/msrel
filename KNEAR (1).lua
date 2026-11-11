@@ -2312,3 +2312,20 @@ task.spawn(function()
         toast(gameReady() and "K NEAR AIO siap (PNB · Harvest · Plant)" or "Belum terhubung. Masuk world lalu tekan Hubungkan")
     end
 end)
+
+-- DEBUG: Cek fungsi yang mungkin nil
+local function debugFunc(name, fn)
+    if type(fn) ~= "function" then
+        warn("[DEBUG] FUNGSI NIL: " .. name)
+    end
+end
+
+-- Panggil debugFunc untuk fungsi-fungsi penting
+-- (Tambahkan ini di akhir script, setelah semua fungsi didefinisikan)
+debugFunc("H.ready", H.ready)
+debugFunc("H.scan", H.scan)
+debugFunc("H.discover", H.discover)
+debugFunc("A.plan", A.plan)
+debugFunc("A.navigate", A.navigate)
+debugFunc("pnbLoop", pnbLoop)
+
