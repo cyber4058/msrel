@@ -1378,7 +1378,7 @@ end
 local H = {
     Running = false, RunId = 0,
     SeedId = nil,
-    Delay = 150,                -- jeda antar pukulan (ms)
+    Delay = 100,                -- jeda antar pukulan / kecepatan harvest (ms)
     Harvested = 0, ReadyNow = 0, Total = 0,
     Det = nil,                  -- hasil deteksi data tanaman
     Unknown = false,            -- true kalau bentuk data tanaman tidak dikenali
@@ -1862,7 +1862,14 @@ function H.loop(run)
             local ok, err = pcall(Refs.Punch, t.x, t.y, State.MutePunch or nil, nil)
             if not ok then say("Error pukul: " .. tostring(err)) break end
             if State.Visual then Anim.swing(t.x, t.y, "punch") end
-            task.wait(math.max(H.Delay, 30) / 1000)
+            -- tunggu sampai panen terdeteksi (cek tiap 20 ms), paling lama sebesar jeda
+            local waited, limit = 0, math.max(H.Delay, 20) / 1000
+            while waited < limit and run() do
+                task.wait(0.02)
+                waited += 0.02
+                if not H.ready(t.x, t.y, t.id) then done = true break end
+            end
+            if done then break end
         end
 
         if done then
@@ -1876,7 +1883,7 @@ function H.loop(run)
         elseif run() then
             H.Failed[key] = os.clock() + 20
         end
-        task.wait(0.03)
+        task.wait()
     end
 end
 
@@ -2435,15 +2442,25 @@ radBox.FocusLost:Connect(function()
     radBox.Text = tostring(P.Radius)
 end)
 checkbox(cSet, "Animasi tangan", "Tampilan memukul tanaman", State.Visual, function(v) State.Visual = v end)
+label(cSet, { Size = UDim2.new(1, 0, 0, 20), Text = "Kecepatan Harvest", Font = FM, TextSize = 14 })
+label(cSet, { Size = UDim2.new(1, 0, 0, 16), Text = "Jeda antar pukulan (ms). Makin kecil = makin cepat", TextSize = 12, TextColor3 = C.sub })
 local delayRow = mk("Frame", { Size = UDim2.new(1, 0, 0, 36), BackgroundTransparency = 1 }, cSet)
-label(delayRow, { Size = UDim2.new(1, -110, 1, 0), Text = "Jeda pukul (ms)", Font = FM, TextSize = 14 })
-local delayBox = field(delayRow, "150", tostring(H.Delay), { Size = UDim2.fromOffset(100, 36), AnchorPoint = Vector2.new(1, 0),
+local delayBox = field(delayRow, "100", tostring(H.Delay), { Size = UDim2.fromOffset(100, 36), AnchorPoint = Vector2.new(1, 0),
     Position = UDim2.new(1, 0, 0, 0), TextXAlignment = Enum.TextXAlignment.Center })
-delayBox.FocusLost:Connect(function()
-    local n = tonumber(delayBox.Text)
-    H.Delay = math.clamp(math.floor(n or H.Delay), 60, 1000)
+label(delayRow, { Size = UDim2.new(1, -110, 1, 0), Text = "Jeda pukul (ms)", Font = FM, TextSize = 14, TextColor3 = C.sub })
+local function setDelay(n)
+    H.Delay = math.clamp(math.floor(n or H.Delay), 20, 1000)
     delayBox.Text = tostring(H.Delay)
-end)
+end
+delayBox.FocusLost:Connect(function() setDelay(tonumber(delayBox.Text)) end)
+local presetRow = mk("Frame", { Size = UDim2.new(1, 0, 0, 34), BackgroundTransparency = 1 }, cSet)
+for i, pr in ipairs({ { "Lambat", 250 }, { "Normal", 150 }, { "Cepat", 80 }, { "Turbo", 30 } }) do
+    local b = button(presetRow, pr[1], { Size = UDim2.new(0.25, -6, 1, 0), Position = UDim2.new((i - 1) * 0.25, (i == 1) and 0 or 3, 0, 0), TextSize = 12 })
+    b.MouseButton1Click:Connect(function()
+        setDelay(pr[2])
+        toast("Kecepatan: " .. pr[1] .. " (" .. pr[2] .. " ms)")
+    end)
+end
 
 -- 4) Status
 local cStat = card(PageH, "Status")
