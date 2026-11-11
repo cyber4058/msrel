@@ -1545,24 +1545,31 @@ function A.loop(run)
         end
 
         if not t then
-            local c = targets[1]
-            local ckey = c.x .. "," .. c.y
-            local sx = A.standX(s, c, R)
-            if not sx then
-                A.Failed[ckey] = os.clock() + 20
-                say(("Tempat (%d,%d) tidak terjangkau, dilewati"):format(c.x, c.y))
-                task.wait()
+            -- tidak ada tempat tanam yang terjangkau dari sini: cari rute otomatis (jauh / beda ketinggian)
+            if os.clock() < A.NoPathUntil then
+                task.wait(0.5)
                 continue
             end
-            say(("Menuju tempat tanam (%d,%d)"):format(c.x, c.y))
-            walkX(run, sx, 0.2, 5, function() return A.reaching(playerState(), c, R) end)
+            say("Mencari blok " .. itemName(A.BaseId) .. "...")
+            local ok, why = A.navigate(run, targets, R)
             if not run() then break end
-            if not A.reaching(playerState(), c, R) then
-                A.Failed[ckey] = os.clock() + 20
-                say(("Gagal mencapai (%d,%d)"):format(c.x, c.y))
+            if not ok then
+                say((why or "Gagal menuju tempat tanam") .. " (coba lagi sebentar)")
+                A.log("navigasi gagal: " .. tostring(why))
+                A.NoPathUntil = os.clock() + 3
+                task.wait(0.5)
                 continue
             end
-            t = c
+            s = playerState()
+            for _, c in ipairs(targets) do
+                if A.reaching(s, c, R) then t = c break end
+            end
+            if not t then
+                local c = targets[1]
+                A.Failed[c.x .. "," .. c.y] = os.clock() + 20
+                say(("Tiba, tapi (%d,%d) belum terjangkau, dilewati"):format(c.x, c.y))
+                continue
+            end
         end
 
         local ok, why = A.plant(t)
@@ -1597,8 +1604,10 @@ function A.start()
     A.Running = true
     A.RunId += 1
     A.Rejected = 0
+    A.NoPathUntil = 0
     table.clear(A.Failed)
     table.clear(A.WorkCache)
+    table.clear(A.Bad)
     local id = A.RunId
     task.spawn(function()
         local ok, err = pcall(A.loop, function() return A.Running and A.RunId == id and alive() end)
@@ -1633,6 +1642,9 @@ function A.diagnose()
     add("blok: " .. tostring(A.BaseId) .. " (" .. (A.BaseId and itemName(A.BaseId) or "-") .. ")")
     add("tempat kosong: " .. tostring(A.Total) .. "  ditanam: " .. tostring(A.Planted) .. "  ditolak beruntun: " .. tostring(A.Rejected))
     add("reach: " .. tostring(A.reach()))
+    add(("lompat: naik maks %d tile, mendatar maks %d tile (kalibrasi naik=%s mendatar=%s)"):format(A.J, A.Dx, tostring(A.Cal.v), tostring(A.Cal.h)))
+    local sp = playerState()
+    if sp then add(("posisi: x=%.2f y=%.2f grounded=%s vx=%s"):format(sp.x, sp.y, tostring(sp.grounded), tostring(sp.vx))) end
     if A.SeedId then add("data seed: " .. tostring(ItemDB[A.SeedId] and (function()
         local p = {}
         for k, v in pairs(ItemDB[A.SeedId]) do p[#p + 1] = tostring(k) .. "=" .. tostring(v) end
@@ -1651,6 +1663,446 @@ function A.diagnose()
     add("-- log terakhir --")
     for _, l in ipairs(A.Log) do add(l) end
     return table.concat(out, "\n")
+end
+
+---------------------------------------------------------------------
+-- NAVIGASI: cari jalur (jalan / lompat / jatuh / turun platform) ke tempat tanam,
+-- sejauh apa pun dan beda ketinggian. Kemampuan lompat dikalibrasi otomatis.
+---------------------------------------------------------------------
+A.J, A.Dx = 2, 2                    -- tile naik maks, tile mendatar maks (awal konservatif)
+A.Cal = { v = false, h = false }    -- sudah dikalibrasi?
+A.Bad = {}                          -- langkah yang gagal (sementara dihindari)
+A.NoPathUntil = 0
+
+-- peta tile dengan cache (dibuat ulang tiap perencanaan)
+function A.ctx()
+    local w = Refs.World
+    local W, H = w.w, w.h
+    local openM, okM = {}, {}
+    local c = { W = W, H = H }
+    function c.open(x, y)
+        if x < 0 or x >= W or y < 0 or y >= H then return false end
+        local k = y * W + x
+        local v = openM[k]
+        if v == nil then
+            v = openAt(x, y)
+            openM[k] = v
+        end
+        return v
+    end
+    function c.ok(x, y)
+        if not c.open(x, y) then return false end
+        local k = y * W + x
+        local v = okM[k]
+        if v == nil then
+            v = realSupport(x, y)
+            okM[k] = v
+        end
+        return v
+    end
+    return c
+end
+
+-- Dijkstra dari tile (sx,sy) sampai goal(x,y) true. Mengembalikan daftar langkah / nil.
+function A.plan(sx, sy, goal)
+    local c = A.ctx()
+    local W, H = c.W, c.H
+    local J, Dx = A.J, A.Dx
+    local now = os.clock()
+    local useBad = next(A.Bad) ~= nil
+    local dist, prev = {}, {}
+    local hc, hk, hx, hy, n = {}, {}, {}, {}, 0
+
+    local function swap(a, b)
+        hc[a], hc[b] = hc[b], hc[a]
+        hk[a], hk[b] = hk[b], hk[a]
+        hx[a], hx[b] = hx[b], hx[a]
+        hy[a], hy[b] = hy[b], hy[a]
+    end
+    local function push(cost, k, x, y)
+        n += 1
+        local i = n
+        hc[i], hk[i], hx[i], hy[i] = cost, k, x, y
+        while i > 1 do
+            local p = i // 2
+            if hc[p] <= hc[i] then break end
+            swap(p, i)
+            i = p
+        end
+    end
+    local function pop()
+        local cost, k, x, y = hc[1], hk[1], hx[1], hy[1]
+        hc[1], hk[1], hx[1], hy[1] = hc[n], hk[n], hx[n], hy[n]
+        hc[n], hk[n], hx[n], hy[n] = nil, nil, nil, nil
+        n -= 1
+        local i = 1
+        while true do
+            local l, r, m = i * 2, i * 2 + 1, i
+            if l <= n and hc[l] < hc[m] then m = l end
+            if r <= n and hc[r] < hc[m] then m = r end
+            if m == i then break end
+            swap(m, i)
+            i = m
+        end
+        return cost, k, x, y
+    end
+
+    local cd, ck, cx, cy = 0, 0, 0, 0
+    local function relax(nx, ny, cost, kind)
+        local nk = ny * W + nx
+        if useBad then
+            local b = A.Bad[ck .. ">" .. nk]
+            if b and b > now then return end
+        end
+        local nd = cd + cost
+        if nd < (dist[nk] or math.huge) then
+            dist[nk] = nd
+            prev[nk] = { k = ck, x = cx, y = cy, kind = kind }
+            push(nd, nk, nx, ny)
+        end
+    end
+
+    local sk = sy * W + sx
+    dist[sk] = 0
+    push(0, sk, sx, sy)
+    local pops = 0
+    while n > 0 do
+        cd, ck, cx, cy = pop()
+        if cd <= (dist[ck] or math.huge) then
+            pops += 1
+            if pops > 14000 then break end
+            if pops % 600 == 0 then task.wait() end
+
+            if goal(cx, cy) then
+                local path, cur = {}, ck
+                while cur ~= sk do
+                    local pv = prev[cur]
+                    table.insert(path, 1, { kind = pv.kind, fx = pv.x, fy = pv.y, tx = cur % W, ty = cur // W })
+                    cur = pv.k
+                end
+                return path
+            end
+
+            local standing = c.ok(cx, cy)
+
+            -- jalan / jatuh ke samping
+            for dir = -1, 1, 2 do
+                local nx = cx + dir
+                if c.ok(nx, cy) then
+                    relax(nx, cy, 1, "walk")
+                elseif c.open(nx, cy) then
+                    for y2 = cy + 1, math.min(H - 1, cy + 30) do
+                        if not c.open(nx, y2) then break end
+                        if c.ok(nx, y2) then
+                            relax(nx, y2, 1 + 0.15 * (y2 - cy), "fall")
+                            break
+                        end
+                    end
+                end
+            end
+
+            if standing then
+                -- turun menembus platform
+                if platformAt(cx, cy + 1) and not solidAt(cx, cy + 1) then
+                    for y2 = cy + 1, math.min(H - 1, cy + 30) do
+                        if not c.open(cx, y2) then break end
+                        if c.ok(cx, y2) and y2 > cy then
+                            relax(cx, y2, 2 + 0.15 * (y2 - cy), "drop")
+                            break
+                        end
+                    end
+                end
+
+                -- lompat naik / melompati celah
+                for dy = 0, J do
+                    local ny = cy - dy
+                    if ny >= 0 then
+                        local clear = true
+                        for kk = 1, math.max(dy, 1) do
+                            if not c.open(cx, cy - kk) then clear = false break end
+                        end
+                        if clear then
+                            for dx = -Dx, Dx do
+                                if not (dy == 0 and math.abs(dx) < 2) then
+                                    local nx = cx + dx
+                                    if c.ok(nx, ny) then
+                                        local sgn = dx > 0 and 1 or -1
+                                        local good, gap = true, (dy > 0)
+                                        for i = 1, math.abs(dx) - 1 do
+                                            if not c.open(cx + i * sgn, ny) then good = false break end
+                                            if dy == 0 then
+                                                if not c.open(cx + i * sgn, ny - 1) then good = false break end
+                                                if not c.ok(cx + i * sgn, ny) then gap = true end -- ada celah beneran
+                                            end
+                                        end
+                                        -- lompat datar hanya untuk melewati celah (kalau lantai utuh, jalan kaki saja)
+                                        if good and gap then
+                                            relax(nx, ny, 3 + dy * 0.6 + math.abs(dx) * 0.3, "jump")
+                                        end
+                                    end
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+    return nil
+end
+
+-- tunggu sampai karakter menapak
+function A.settle(run, maxSec)
+    local t0 = os.clock()
+    while run() and os.clock() - t0 < maxSec do
+        local s = playerState()
+        if s and s.grounded ~= false then return s end
+        task.wait()
+    end
+    return playerState()
+end
+
+-- Kalibrasi tinggi & jarak lompat nyata (sekali, kalau ruangnya cukup)
+function A.calibrate(run)
+    if A.Cal.v and A.Cal.h then return end
+    local s = A.settle(run, 1)
+    if not s or s.grounded == false then return end
+    local x, y = floor(s.x), floor(s.y - 0.475)
+
+    if not A.Cal.v then
+        local free = true
+        for k = 1, 6 do
+            if not openAt(x, y - k) then free = false break end
+        end
+        if free then
+            say("Kalibrasi lompat...")
+            walkX(run, x + 0.5, 0.12, 1.5, nil)
+            s = playerState()
+            if s then
+                local y0, minY = s.y, s.y
+                AutoInput.active = true
+                AutoInput.jump = true
+                local t0 = os.clock()
+                while run() and os.clock() - t0 < 1.6 do
+                    task.wait()
+                    s = playerState()
+                    if not s then break end
+                    if s.y < minY then minY = s.y end
+                    if s.y > minY + 0.05 then AutoInput.jump = false end
+                    if os.clock() - t0 > 0.25 and s.grounded then break end
+                end
+                releaseInput()
+                AutoInput.active = false
+                local rise = y0 - minY
+                if rise > 0.4 then
+                    A.J = math.clamp(math.floor(rise - 0.15), 1, 4)
+                    A.Cal.v = true
+                    A.log(("kalibrasi naik: rise=%.2f -> J=%d"):format(rise, A.J))
+                end
+                A.settle(run, 1.5)
+            end
+        end
+    end
+
+    if not A.Cal.h then
+        s = playerState()
+        if not s then return end
+        x, y = floor(s.x), floor(s.y - 0.475)
+        for _, dir in ipairs({ 1, -1 }) do
+            local flat = true
+            for i = 0, 6 do
+                if not (openAt(x + dir * i, y) and openAt(x + dir * i, y - 1) and realSupport(x + dir * i, y)) then flat = false break end
+            end
+            if flat then
+                say("Kalibrasi jarak lompat...")
+                walkX(run, x + 0.5, 0.12, 1.5, nil)
+                s = playerState()
+                if s then
+                    local x0, far = s.x, 0
+                    AutoInput.active = true
+                    AutoInput.jump = true
+                    AutoInput.left, AutoInput.right = dir < 0, dir > 0
+                    local t0, minY = os.clock(), s.y
+                    while run() and os.clock() - t0 < 2 do
+                        task.wait()
+                        s = playerState()
+                        if not s then break end
+                        if s.y < minY then minY = s.y end
+                        if s.y > minY + 0.05 then AutoInput.jump = false end
+                        far = math.max(far, (s.x - x0) * dir)
+                        if os.clock() - t0 > 0.25 and s.grounded then break end
+                    end
+                    releaseInput()
+                    AutoInput.active = false
+                    if far > 0.8 then
+                        A.Dx = math.clamp(math.floor(far), 1, 5)
+                        A.Cal.h = true
+                        A.log(("kalibrasi mendatar: jarak=%.2f -> Dx=%d"):format(far, A.Dx))
+                    end
+                    A.settle(run, 1.5)
+                end
+                break
+            end
+        end
+    end
+end
+
+-- satu langkah: lompat
+function A.doJump(run, e)
+    AutoInput.active = true
+    local fxc, destX = e.fx + 0.5, e.tx + 0.5
+    local rise = e.fy - e.ty
+
+    -- rata di tengah tile awal
+    local t0 = os.clock()
+    while run() and os.clock() - t0 < 2 do
+        task.wait()
+        local s = playerState()
+        if not s then releaseInput() AutoInput.active = false return false end
+        steerX(s, fxc, 0.12)
+        if abs(s.x - fxc) <= 0.15 and abs(s.vx or 0) < 1 and s.grounded ~= false then break end
+    end
+    AutoInput.left, AutoInput.right = false, false
+
+    AutoInput.jump = true
+    local started = os.clock()
+    local s0 = playerState()
+    local minY = s0 and s0.y or 0
+    local apexed = false
+    while run() and os.clock() - started < 3 do
+        task.wait()
+        local s = playerState()
+        if not s then break end
+        if s.y < minY then minY = s.y end
+        if s.y > minY + 0.05 then
+            apexed = true
+            AutoInput.jump = false
+        end
+        local above = s.y <= e.ty + 0.85
+        if rise > 0 and not above and not apexed then
+            AutoInput.left, AutoInput.right = false, false -- naik dulu, baru geser
+        else
+            steerX(s, destX, 0.1)
+        end
+        if os.clock() - started > 0.15 and s.grounded then break end
+    end
+    AutoInput.jump = false
+    -- peluruhan: rapikan posisi di tengah tile tujuan
+    local s = A.settle(run, 1.5)
+    if s and s.grounded ~= false then walkX(run, destX, 0.2, 1, nil) end
+    releaseInput()
+    AutoInput.active = false
+    return true
+end
+
+-- satu langkah: jatuh dari tepi
+function A.doFall(run, e)
+    AutoInput.active = true
+    local destX = e.tx + 0.5
+    local t0 = os.clock()
+    while run() and os.clock() - t0 < 4 + 0.2 * (e.ty - e.fy) do
+        task.wait()
+        local s = playerState()
+        if not s then break end
+        steerX(s, destX, 0.1)
+        if s.grounded and floor(s.y - 0.475) == e.ty and os.clock() - t0 > 0.1 then break end
+    end
+    local s = A.settle(run, 1)
+    if s then walkX(run, destX, 0.2, 1, nil) end
+    releaseInput()
+    AutoInput.active = false
+    return true
+end
+
+-- satu langkah: turun menembus platform
+function A.doDrop(run, e)
+    AutoInput.active = true
+    local t0 = os.clock()
+    while run() and os.clock() - t0 < 1.2 do
+        task.wait()
+        local s = playerState()
+        if not s then break end
+        AutoInput.down = true
+        steerX(s, e.fx + 0.5, 0.15)
+        if floor(s.y - 0.475) > e.fy then break end
+    end
+    AutoInput.down = false
+    A.doFall(run, e)
+    return true
+end
+
+-- Menuju tempat berdiri yang menjangkau salah satu tempat tanam. true = tiba.
+function A.navigate(run, targets, R)
+    local W = Refs.World.w
+    local tset = {}
+    for _, t in ipairs(targets) do tset[t.y * W + t.x] = true end
+    local rr = math.ceil(R)
+    local fake = { x = 0, y = 0 }
+    local function goal(nx, ny)
+        fake.x, fake.y = nx + 0.5, ny + 1
+        for tx = nx - rr, nx + rr do
+            for ty = ny - rr, ny + rr do
+                if tset[ty * W + tx] and not (tx == nx and ty == ny)
+                    and stateReaches(fake, tx, ty, R) and Move.los(nx, ny, tx, ty) then
+                    return true
+                end
+            end
+        end
+        return false
+    end
+
+    for attempt = 1, 8 do
+        if not run() then return false, "dihentikan" end
+        local s = A.settle(run, 2)
+        if not s then return false, "Karakter tidak ditemukan" end
+        if attempt == 1 then
+            pcall(A.calibrate, run)
+            s = A.settle(run, 1.5) or playerState()
+            if not s then return false, "Karakter tidak ditemukan" end
+        end
+        local sx, sy = floor(s.x), floor(s.y - 0.475)
+        local path = A.plan(sx, sy, goal)
+        if not path then return false, "Tidak ada jalur ke tempat tanam" end
+        if #path == 0 then return true end
+        say(("Mencari tempat tanam: %d langkah"):format(#path))
+        A.log(("rute %d langkah dari (%d,%d)"):format(#path, sx, sy))
+
+        local i, failed = 1, false
+        while i <= #path and run() do
+            local e = path[i]
+            local last = i
+            if e.kind == "walk" then
+                while path[last + 1] and path[last + 1].kind == "walk" and path[last + 1].fy == e.fy do last += 1 end
+                local tgt = path[last]
+                walkX(run, tgt.tx + 0.5, 0.15, 1.5 + (last - i + 1) * 0.6, nil)
+                e = tgt
+            elseif e.kind == "jump" then
+                A.doJump(run, e)
+            elseif e.kind == "fall" then
+                A.doFall(run, e)
+            else
+                A.doDrop(run, e)
+            end
+
+            local s2 = A.settle(run, 1.5)
+            if not s2 then failed = true break end
+            local ax, ay = floor(s2.x), floor(s2.y - 0.475)
+            if ax == e.tx and ay == e.ty and e.kind == "jump" then
+                A.J = math.min(4, math.max(A.J, e.fy - e.ty)) -- terbukti bisa
+            end
+            if ax ~= e.tx or ay ~= e.ty then
+                if e.kind ~= "walk" then
+                    A.Bad[(e.fy * W + e.fx) .. ">" .. (e.ty * W + e.tx)] = os.clock() + 20
+                end
+                A.log(("langkah %s (%d,%d)->(%d,%d) meleset, di (%d,%d)"):format(e.kind, e.fx, e.fy, e.tx, e.ty, ax, ay))
+                failed = true
+                break
+            end
+            i = last + 1
+        end
+        if not failed then return true end
+    end
+    return false, "Gagal menuju tempat tanam"
 end
 
 ---------------------------------------------------------------------
@@ -2046,7 +2498,7 @@ end)
 ---------------------------------------------------------------------
 local cAbout = card(PageInfo, "K NEAR", "AUTO PLANT - Tanam otomatis")
 label(cAbout, { Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y, TextWrapped = true, TextSize = 13, TextColor3 = C.sub,
-    Text = "Pilih seed dari inventori, pilih blok dasar (misalnya Dirt), lalu aktifkan. Seed hanya ditanam di tile kosong tepat di atas blok yang dipilih, tidak di blok lain." })
+    Text = "Pilih seed dari inventori, pilih blok dasar (misalnya Dirt), lalu aktifkan. Seed hanya ditanam di tile kosong tepat di atas blok yang dipilih, tidak di blok lain. Kalau kamu jauh dari blok itu, karakter otomatis mencari jalannya (jalan, lompat, turun)." })
 local cDc = card(PageInfo, "Komunitas")
 label(cDc, { Size = UDim2.new(1, 0, 0, 18), Text = DISCORD_URL, TextSize = 13, TextColor3 = C.accent, Font = FM })
 local copyDc = button(cDc, "Salin link Discord", { Size = UDim2.new(1, 0, 0, 38) }, true)
