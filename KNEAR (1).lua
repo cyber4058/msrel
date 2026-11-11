@@ -3240,7 +3240,6 @@ do
         end
         scanObj(InventoryModule, "Inv", Refs.Inv)
         scanObj(Refs.Inv, "Inv", Refs.Inv)
-        scanObj(Refs.Menu, "Menu", nil)
         for _, ch in ipairs(WorldRemotes:GetChildren()) do
             if nameOk(ch.Name) then
                 if ch:IsA("RemoteFunction") then
@@ -3315,13 +3314,57 @@ do
         return false
     end
 
+    -- Fungsi drop game: Hud.onDrop(id, jumlah). Item jatuh di depan karakter.
+    local function hudDropFn()
+        local hud = Refs.Hud
+        local f = hud and rawget(hud, "onDrop")
+        return type(f) == "function" and f or nil
+    end
+
+    -- hadap ke arah sebaliknya (kalau di depan karakter ada tembok / tidak boleh drop)
+    local function flipFacing()
+        local st = playerState()
+        local right = st and (st.facing or 1) < 0
+        AutoInput.active = true
+        AutoInput.right, AutoInput.left = right, not right
+        task.wait(0.06)
+        AutoInput.right, AutoInput.left = false, false
+        AutoInput.active = false
+        releaseInput()
+        task.wait(0.3)
+    end
+
     -- jatuhkan n seed. Return jumlah yang benar-benar keluar dari inventori.
     function F.dropOnce(run, id, n)
-        local before = invCount(id)
-        if before <= 0 then return 0 end
-        n = math.min(n, before, 200)
+        local before0 = invCount(id)
+        if before0 <= 0 then return 0 end
+        n = math.min(n, before0, 200)
+
+        local f = hudDropFn()
+        if f then
+            local flipped = false
+            for attempt = 1, 3 do
+                if not run() then return 0 end
+                local before = invCount(id)
+                local ok, err = pcall(f, id, n)
+                flog(("Hud.onDrop(%s, %d) -> %s"):format(tostring(id), n, ok and "dipanggil" or ("error: " .. tostring(err))))
+                task.wait(0.7) -- game menolak drop yang terlalu cepat (0.3 dtk)
+                local got = before - invCount(id)
+                if got > 0 then
+                    Fac.label = "Hud.onDrop"
+                    return got
+                end
+                if flipped then break end
+                flipped = true
+                flipFacing()
+            end
+            return 0, "tidak bisa drop di posisi ini"
+        end
+
+        -- cadangan (game lama / Hud.onDrop hilang): tebak fungsi drop, tanpa menyentuh Menu
+        local before = before0
         if not Fac.call then
-            if not learn(run, id) then return 0, "fungsi drop game tidak ketemu" end
+            if not learn(run, id) then return 0, "fungsi drop game tidak ketemu (Hud.onDrop tidak ada)" end
             local after = invCount(id)
             local got = math.max(0, before - after)
             n -= got
@@ -3514,7 +3557,8 @@ do
         add("fungsi drop terpakai: " .. tostring(Fac.label))
         if Refs.World then add("World fungsi: " .. keysOf(Refs.World, true)) end
         if InventoryModule then add("Inventori modul: " .. keysOf(InventoryModule, true)) end
-        if Refs.Menu then add("Menu fungsi: " .. keysOf(Refs.Menu, true)) end
+        add("Hud.onDrop ada: " .. tostring(hudDropFn() ~= nil))
+        if Refs.Hud then add("Hud fungsi: " .. keysOf(Refs.Hud, true)) end
         local rem = {}
         for _, ch in ipairs(WorldRemotes:GetChildren()) do rem[#rem + 1] = ch.Name .. "(" .. ch.ClassName .. ")" end
         add("WorldRemotes: " .. table.concat(rem, ", "))
