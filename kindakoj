@@ -1,0 +1,323 @@
+-- =====================================================================
+-- K NEAR LOADER  (ini yang dibagikan ke pengguna; script utama ada di server)
+--   * Menampilkan HWID perangkat + form key
+--   * 1 key = 1 perangkat, tidak bisa dipakai bersamaan, ada masa berlaku
+--   * Key tersimpan, jadi eksekusi berikutnya otomatis masuk selama key masih valid
+-- Ganti 2 nilai di CONFIG, lalu bagikan file ini.
+-- =====================================================================
+local CONFIG = {
+    API = " https://knear-license.lomarbesar.workers.dev/v1",   -- tanpa garis miring di akhir
+    DISCORD = "https://discord.gg/jJrdZRaJqV",
+    KEYFILE = "knear_key.txt",
+}
+
+local Players = game:GetService("Players")
+local HttpService = game:GetService("HttpService")
+local UserInputService = game:GetService("UserInputService")
+local G = (getgenv and getgenv()) or _G
+
+---------------------------------------------------------------------
+-- SHA-256 (murni Luau) untuk membuat HWID
+---------------------------------------------------------------------
+local SHA_K = {
+        0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
+        0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
+        0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
+        0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967,
+        0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85,
+        0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
+        0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
+        0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2,
+}
+local SHA_H = {
+        0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19,
+}
+local function sha256(msg)
+    local band, bxor, bnot, rrot, rshift = bit32.band, bit32.bxor, bit32.bnot, bit32.rrotate, bit32.rshift
+    local len = #msg
+    msg = msg .. "\128" .. string.rep("\0", (55 - len) % 64) .. string.pack(">I8", len * 8)
+    local h = { table.unpack(SHA_H) }
+    local w = table.create(64, 0)
+    for chunk = 1, #msg, 64 do
+        for i = 0, 15 do w[i + 1] = string.unpack(">I4", msg, chunk + i * 4) end
+        for i = 17, 64 do
+            local a, b = w[i - 15], w[i - 2]
+            local s0 = bxor(rrot(a, 7), rrot(a, 18), rshift(a, 3))
+            local s1 = bxor(rrot(b, 17), rrot(b, 19), rshift(b, 10))
+            w[i] = (w[i - 16] + s0 + w[i - 7] + s1) % 4294967296
+        end
+        local a, b, c, d, e, f, g, hh = h[1], h[2], h[3], h[4], h[5], h[6], h[7], h[8]
+        for i = 1, 64 do
+            local S1 = bxor(rrot(e, 6), rrot(e, 11), rrot(e, 25))
+            local ch = bxor(band(e, f), band(bnot(e), g))
+            local t1 = (hh + S1 + ch + SHA_K[i] + w[i]) % 4294967296
+            local S0 = bxor(rrot(a, 2), rrot(a, 13), rrot(a, 22))
+            local maj = bxor(band(a, b), band(a, c), band(b, c))
+            local t2 = (S0 + maj) % 4294967296
+            hh, g, f, e, d, c, b, a = g, f, e, (d + t1) % 4294967296, c, b, a, (t1 + t2) % 4294967296
+        end
+        h[1] = (h[1] + a) % 4294967296 h[2] = (h[2] + b) % 4294967296
+        h[3] = (h[3] + c) % 4294967296 h[4] = (h[4] + d) % 4294967296
+        h[5] = (h[5] + e) % 4294967296 h[6] = (h[6] + f) % 4294967296
+        h[7] = (h[7] + g) % 4294967296 h[8] = (h[8] + hh) % 4294967296
+    end
+    local out = {}
+    for i = 1, 8 do out[i] = string.format("%08x", h[i]) end
+    return table.concat(out)
+end
+
+---------------------------------------------------------------------
+-- HWID: id perangkat (RbxAnalytics ClientId). gethwid() executor hanya cadangan.
+---------------------------------------------------------------------
+local function getHwid()
+    local raw
+    local ok, id = pcall(function() return game:GetService("RbxAnalyticsService"):GetClientId() end)
+    if ok and type(id) == "string" and #id > 4 then raw = id end
+    if not raw and type(gethwid) == "function" then
+        local ok2, v = pcall(gethwid)
+        if ok2 and v then raw = tostring(v) end
+    end
+    if not raw then return nil end
+    return sha256("KNEAR|" .. raw)
+end
+
+---------------------------------------------------------------------
+-- HTTP
+---------------------------------------------------------------------
+local req = (syn and syn.request) or (http and http.request) or http_request or request
+local function post(path, tbl)
+    if not req then return nil, "Executor tidak mendukung request HTTP" end
+    local ok, res = pcall(req, {
+        Url = CONFIG.API .. path, Method = "POST",
+        Headers = { ["Content-Type"] = "application/json" },
+        Body = HttpService:JSONEncode(tbl),
+    })
+    if not ok then return nil, tostring(res) end
+    if type(res) ~= "table" then return nil, "respon kosong" end
+    local ok2, data = pcall(function() return HttpService:JSONDecode(res.Body or "") end)
+    if not ok2 or type(data) ~= "table" then
+        return nil, "respon server tidak valid (HTTP " .. tostring(res.StatusCode) .. ")"
+    end
+    return data
+end
+
+local function fmtDur(s)
+    s = math.max(0, math.floor(s))
+    local d, h, m = s // 86400, (s % 86400) // 3600, (s % 3600) // 60
+    if d > 0 then return d .. " hari " .. h .. " jam" end
+    if h > 0 then return h .. " jam " .. m .. " menit" end
+    return m .. " menit"
+end
+
+local function notify(text)
+    pcall(function()
+        game:GetService("StarterGui"):SetCore("SendNotification", { Title = "K NEAR", Text = text, Duration = 8 })
+    end)
+end
+
+---------------------------------------------------------------------
+-- GUI
+---------------------------------------------------------------------
+local C = {
+    bg = Color3.fromRGB(18, 18, 20), bar = Color3.fromRGB(24, 24, 27), card = Color3.fromRGB(34, 34, 38),
+    field = Color3.fromRGB(44, 44, 50), text = Color3.fromRGB(240, 240, 244), sub = Color3.fromRGB(160, 160, 170),
+    green = Color3.fromRGB(26, 173, 84), blurple = Color3.fromRGB(88, 101, 242),
+    ok = Color3.fromRGB(80, 220, 130), bad = Color3.fromRGB(255, 95, 95), warn = Color3.fromRGB(255, 200, 80),
+}
+
+local function mk(class, props, parent)
+    local o = Instance.new(class)
+    for k, v in pairs(props) do o[k] = v end
+    o.Parent = parent
+    return o
+end
+local function corner(o, r) mk("UICorner", { CornerRadius = UDim.new(0, r) }, o) end
+
+local function guiParent()
+    if gethui then
+        local ok, h = pcall(gethui)
+        if ok and h then return h end
+    end
+    local ok = pcall(function() return game:GetService("CoreGui").Name end)
+    if ok then return game:GetService("CoreGui") end
+    return Players.LocalPlayer:WaitForChild("PlayerGui")
+end
+
+local HWID = getHwid()
+local Gui, Status, KeyBox, VerifyBtn
+local dragConn
+
+local function destroyGui()
+    if dragConn then dragConn:Disconnect() dragConn = nil end
+    if Gui then Gui:Destroy() Gui = nil end
+end
+
+local function setStatus(text, color)
+    if Status then Status.Text = text Status.TextColor3 = color or C.sub end
+end
+
+local function buildGui()
+    local vp = workspace.CurrentCamera and workspace.CurrentCamera.ViewportSize or Vector2.new(800, 400)
+    local W = math.clamp(vp.X - 24, 300, 460)
+    local H = math.clamp(vp.Y - 24, 250, 360)
+
+    Gui = mk("ScreenGui", { Name = "KnearLoader", ResetOnSpawn = false, IgnoreGuiInset = true,
+        ZIndexBehavior = Enum.ZIndexBehavior.Sibling, DisplayOrder = 999 }, guiParent())
+    local Win = mk("Frame", { Size = UDim2.fromOffset(W, H), Position = UDim2.new(0.5, -W / 2, 0.5, -H / 2),
+        BackgroundColor3 = C.bg, BorderSizePixel = 0, ClipsDescendants = true }, Gui)
+    corner(Win, 14)
+
+    local Bar = mk("Frame", { Size = UDim2.new(1, 0, 0, 40), BackgroundColor3 = C.bar, BorderSizePixel = 0 }, Win)
+    local closeDot = mk("TextButton", { Size = UDim2.fromOffset(14, 14), Position = UDim2.fromOffset(14, 13), Text = "",
+        BackgroundColor3 = Color3.fromRGB(255, 95, 87), AutoButtonColor = false, BorderSizePixel = 0 }, Bar)
+    corner(closeDot, 7)
+    for i, col in ipairs({ Color3.fromRGB(254, 188, 46), Color3.fromRGB(40, 200, 64) }) do
+        local d = mk("Frame", { Size = UDim2.fromOffset(14, 14), Position = UDim2.fromOffset(14 + i * 22, 13),
+            BackgroundColor3 = col, BorderSizePixel = 0 }, Bar)
+        corner(d, 7)
+    end
+    mk("TextLabel", { Size = UDim2.new(1, -110, 1, 0), Position = UDim2.fromOffset(88, 0), BackgroundTransparency = 1,
+        Text = "K NEAR   |   Key Verification", Font = Enum.Font.GothamBold, TextSize = 14, TextColor3 = C.text,
+        TextXAlignment = Enum.TextXAlignment.Left }, Bar)
+    closeDot.MouseButton1Click:Connect(destroyGui)
+
+    local Body = mk("ScrollingFrame", { Size = UDim2.new(1, -16, 1, -48), Position = UDim2.fromOffset(8, 44),
+        BackgroundTransparency = 1, BorderSizePixel = 0, ScrollBarThickness = 3, CanvasSize = UDim2.new(),
+        AutomaticCanvasSize = Enum.AutomaticSize.Y }, Win)
+    mk("UIListLayout", { Padding = UDim.new(0, 8), SortOrder = Enum.SortOrder.LayoutOrder }, Body)
+    mk("UIPadding", { PaddingBottom = UDim.new(0, 8) }, Body)
+
+    local function label(parent, props)
+        local p = { Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y, BackgroundTransparency = 1,
+            Font = Enum.Font.Gotham, TextSize = 13, TextColor3 = C.text, TextWrapped = true,
+            TextXAlignment = Enum.TextXAlignment.Left }
+        for k, v in pairs(props) do p[k] = v end
+        return mk("TextLabel", p, parent)
+    end
+    local function button(text, color, order)
+        local b = mk("TextButton", { Size = UDim2.new(1, 0, 0, 40), BackgroundColor3 = color, Text = text,
+            Font = Enum.Font.GothamBold, TextSize = 14, TextColor3 = (color == C.green) and Color3.fromRGB(4, 20, 10) or C.text,
+            AutoButtonColor = true, BorderSizePixel = 0, LayoutOrder = order }, Body)
+        corner(b, 10)
+        return b
+    end
+
+    local Card = mk("Frame", { Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y,
+        BackgroundColor3 = C.card, BorderSizePixel = 0, LayoutOrder = 1 }, Body)
+    corner(Card, 10)
+    mk("UIPadding", { PaddingTop = UDim.new(0, 10), PaddingBottom = UDim.new(0, 10), PaddingLeft = UDim.new(0, 12), PaddingRight = UDim.new(0, 12) }, Card)
+    mk("UIListLayout", { Padding = UDim.new(0, 5), SortOrder = Enum.SortOrder.LayoutOrder }, Card)
+    label(Card, { Text = "Verifikasi Lisensi K NEAR", Font = Enum.Font.GothamBold, TextSize = 16, LayoutOrder = 1 })
+    label(Card, { Text = "Masukkan key kamu untuk membuka K NEAR. Satu key hanya untuk satu perangkat dan tidak bisa dipakai bersamaan.",
+        TextColor3 = C.sub, TextSize = 12, LayoutOrder = 2 })
+    label(Card, { Text = "HWID Perangkat:", Font = Enum.Font.GothamMedium, TextSize = 12, LayoutOrder = 3 })
+    label(Card, { Text = HWID or "(HWID tidak tersedia)", Font = Enum.Font.Code, TextSize = 11, TextColor3 = C.sub, LayoutOrder = 4 })
+
+    KeyBox = mk("TextBox", { Size = UDim2.new(1, 0, 0, 40), BackgroundColor3 = C.field, Text = "", ClearTextOnFocus = false,
+        PlaceholderText = "KNEAR-XXXX-XXXX-XXXX-XXXX", PlaceholderColor3 = C.sub, Font = Enum.Font.Code, TextSize = 14,
+        TextColor3 = C.text, BorderSizePixel = 0, LayoutOrder = 2 }, Body)
+    corner(KeyBox, 10)
+
+    Status = label(Body, { Text = "", TextSize = 12, LayoutOrder = 3, TextColor3 = C.sub })
+    VerifyBtn = button("Verifikasi & Buka Script", C.green, 4)
+    local CopyBtn = button("Salin HWID", C.field, 5)
+    local DiscordBtn = button("Join Discord For Key", C.blurple, 6)
+
+    CopyBtn.MouseButton1Click:Connect(function()
+        if HWID and pcall(function() setclipboard(HWID) end) then setStatus("HWID disalin ke clipboard", C.ok)
+        else setStatus("Tidak bisa menyalin HWID di executor ini", C.warn) end
+    end)
+    DiscordBtn.MouseButton1Click:Connect(function()
+        if pcall(function() setclipboard(CONFIG.DISCORD) end) then setStatus("Link Discord disalin: " .. CONFIG.DISCORD, C.ok)
+        else setStatus("Discord: " .. CONFIG.DISCORD, C.sub) end
+    end)
+
+    -- geser jendela lewat bar judul
+    local dragging, dragStart, startPos = false, nil, nil
+    Bar.InputBegan:Connect(function(i)
+        if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then
+            dragging, dragStart, startPos = true, i.Position, Win.Position
+            i.Changed:Connect(function() if i.UserInputState == Enum.UserInputState.End then dragging = false end end)
+        end
+    end)
+    dragConn = UserInputService.InputChanged:Connect(function(i)
+        if dragging and (i.UserInputType == Enum.UserInputType.MouseMovement or i.UserInputType == Enum.UserInputType.Touch) then
+            local d = i.Position - dragStart
+            Win.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + d.X, startPos.Y.Scale, startPos.Y.Offset + d.Y)
+        end
+    end)
+end
+
+---------------------------------------------------------------------
+-- Verifikasi
+---------------------------------------------------------------------
+local FATAL = { invalid = true, revoked = true, expired = true, hwid_mismatch = true } -- key tersimpan dihapus
+local busy = false
+
+local function verifyKey(key)
+    if busy then return end
+    key = string.upper((tostring(key or ""):gsub("%s", "")))
+    if key == "" then setStatus("Masukkan key dulu", C.warn) return end
+    if not HWID then setStatus("HWID perangkat tidak tersedia, executor tidak didukung", C.bad) return end
+    busy = true
+    setStatus("Memverifikasi...", C.warn)
+
+    -- lepas sesi dari eksekusi sebelumnya supaya tidak dianggap "sedang dipakai"
+    if type(G.__KnearLicStop) == "function" then
+        pcall(G.__KnearLicStop)
+        G.__KnearLicStop = nil
+        task.wait(0.6)
+    end
+
+    local data, err = post("/verify", { key = key, hwid = HWID })
+    if not data then
+        setStatus("Gagal terhubung ke server: " .. tostring(err), C.bad)
+        busy = false
+        return
+    end
+    if not data.ok then
+        setStatus(tostring(data.msg or data.code or "Verifikasi gagal"), C.bad)
+        if FATAL[data.code] and isfile and delfile then
+            pcall(function() if isfile(CONFIG.KEYFILE) then delfile(CONFIG.KEYFILE) end end)
+        end
+        busy = false
+        return
+    end
+
+    local fn, lerr = loadstring(data.script)
+    if not fn then
+        post("/stop", { key = key, sid = data.sid })
+        setStatus("Script gagal dimuat: " .. tostring(lerr), C.bad)
+        busy = false
+        return
+    end
+    if writefile then pcall(writefile, CONFIG.KEYFILE, key) end
+    setStatus("Verifikasi berhasil, membuka script...", C.ok)
+    if data.expires_at then notify("Lisensi aktif. Sisa " .. fmtDur(data.expires_at - data.now))
+    else notify("Lisensi permanen aktif") end
+    task.wait(0.3)
+    destroyGui()
+    busy = false
+    local ok, e = pcall(fn)
+    if not ok then warn("[K NEAR] " .. tostring(e)) end
+end
+
+buildGui()
+VerifyBtn.MouseButton1Click:Connect(function() verifyKey(KeyBox.Text) end)
+KeyBox.FocusLost:Connect(function(enter) if enter then verifyKey(KeyBox.Text) end end)
+
+if not HWID then
+    setStatus("HWID perangkat tidak tersedia, executor tidak didukung", C.bad)
+elseif not req then
+    setStatus("Executor tidak mendukung request HTTP", C.bad)
+else
+    -- key tersimpan -> masuk otomatis
+    local saved
+    if isfile and readfile then
+        pcall(function() if isfile(CONFIG.KEYFILE) then saved = readfile(CONFIG.KEYFILE) end end)
+    end
+    if saved and #saved > 0 then
+        KeyBox.Text = saved
+        task.spawn(verifyKey, saved)
+    end
+end
