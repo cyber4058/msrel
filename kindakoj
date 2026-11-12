@@ -6,7 +6,7 @@
 -- Ganti 2 nilai di CONFIG, lalu bagikan file ini.
 -- =====================================================================
 local CONFIG = {
-    API = "https://knear-license.lomarbesar.workers.dev/v1",   -- tanpa garis miring di akhir
+    API = "https://knear-license.lomaribesar.workers.dev/v1",   -- tanpa garis miring di akhir
     DISCORD = "https://discord.gg/jJrdZRaJqV",
     KEYFILE = "knear_key.txt",
 }
